@@ -1,5 +1,11 @@
 import { audit, encodeScope } from "@auditstream/node";
 
+export {
+  auditTransaction,
+  type PrismaRawExecutor,
+  type PrismaTransactionRunner,
+} from "./fallback.js";
+
 /** Package identifier exported by `@auditstream/prisma`. */
 export const PACKAGE_NAME: "@auditstream/prisma" = "@auditstream/prisma";
 
@@ -33,8 +39,17 @@ export type SqlCommenterPlugin = (context?: SqlCommenterContext) => SqlCommenter
  * Creates a Prisma 7 SQL comments plugin that attaches the active `audit.as()` actor and
  * context as an `auditstream` sqlcommenter tag.
  *
- * Outside an active `audit.as()` scope, the plugin returns an empty object `{}` so no
- * `auditstream` key is emitted.
+ * - **Supported versions:** Requires `@prisma/client` 7.1.0 or newer within Prisma 7.x
+ *   (`>=7.1.0 <8`). Prisma 6 is not supported.
+ * - **Empty outside scope:** Outside an active `audit.as()` scope, the plugin returns `{}`
+ *   so no `auditstream` key is emitted.
+ * - **Prisma Accelerate limit:** Under Prisma Accelerate, SQL comments plugins do not receive
+ *   rendered SQL and comment delivery to PostgreSQL is undocumented. Use
+ *   {@link auditTransaction} (`set_config` fallback) for Accelerate workloads.
+ * - **`statementNameGenerator` rule:** Never configure `PrismaPg`'s optional
+ *   `statementNameGenerator` alongside SQL comments. Per-actor comments paired with named
+ *   prepared statements grow `node-postgres`'s prepared-statement cache unboundedly and
+ *   violate `spec/transport.md`.
  *
  * @example
  * ```ts
