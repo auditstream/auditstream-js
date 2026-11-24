@@ -39,24 +39,6 @@ describe("wrapNeonHttp() + Drizzle 0.45 and 1.x Neon HTTP integration", () => {
     proxy = await startNeonProxy({ database: db.database });
     neonConfig.fetchEndpoint = proxy.fetchEndpoint;
 
-    // Wait for local-neon-http-proxy's upstream Postgres backend to finish initializing
-    // (TCP port 4444 opens slightly before /sql stops returning HTTP 502).
-    const probeSql = neon(proxy.urlFor(db.database));
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      try {
-        await probeSql.query("SELECT 1");
-        lastErr = undefined;
-        break;
-      } catch (err) {
-        lastErr = err;
-        await sleep(100);
-      }
-    }
-    if (lastErr !== undefined) {
-      throw lastErr;
-    }
-
     adminClient = new pg.Client({ connectionString: db.adminUrl });
     await adminClient.connect();
   });

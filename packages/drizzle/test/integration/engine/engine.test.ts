@@ -296,20 +296,6 @@ interface QueryablePool {
   query(sql: string): Promise<{ rows: Array<{ name: string; statement: string }> }>;
 }
 
-async function waitForNeonWsReady(pool: NeonPool): Promise<void> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    try {
-      await pool.query("SELECT 1");
-      return;
-    } catch (err) {
-      lastError = err;
-      await sleep(100);
-    }
-  }
-  throw lastError;
-}
-
 async function assertNoTaggedPreparedStatementsPg(pool: QueryablePool): Promise<void> {
   const res = await pool.query("SELECT name, statement FROM pg_prepared_statements");
   const leaked = res.rows.filter((r) => r.statement.includes("auditstream="));
@@ -431,9 +417,8 @@ describe("@auditstream/drizzle on real engine-generated migrations (0.45 and 1.x
           neonConfig.pipelineConnect = false;
 
           pool = wrapPgPool(new NeonPool({ connectionString: proxy.urlFor(db.database), max: 5 }));
-          // Suppress idle WebSocket disconnect 'error' events during proxy startup warmup and teardown.
+          // Suppress idle WebSocket disconnect 'error' events during pool teardown.
           pool.on("error", () => {});
-          await waitForNeonWsReady(pool);
           const orm =
             version === "0.45" ? drizzleNeon045({ client: pool }) : drizzleNeonV1({ client: pool });
 
