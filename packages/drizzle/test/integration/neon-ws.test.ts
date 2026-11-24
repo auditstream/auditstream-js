@@ -56,6 +56,7 @@ describe("wrapPgPool() + Drizzle 0.45 Neon WebSocket Pool integration", () => {
   it("captures insert, transaction with savepoint, prepared statement, actor-less seed, and 40 concurrent writes over Neon WebSocket", async () => {
     const startId = await resetAuditState();
     const pool = wrapPgPool(new NeonPool({ connectionString: proxy.urlFor(db.database), max: 5 }));
+    pool.on("error", () => {});
     const orm = drizzle({ client: pool });
 
     try {
@@ -141,6 +142,7 @@ describe("wrapPgPool() + Drizzle 0.45 Neon WebSocket Pool integration", () => {
   it("interleaves 20 actor-less and 20 tagged updates through a Neon WebSocket pool of 2 with zero actor leaks", async () => {
     const startId = await resetAuditState();
     const pool = wrapPgPool(new NeonPool({ connectionString: proxy.urlFor(db.database), max: 2 }));
+    pool.on("error", () => {});
     const orm = drizzle({ client: pool });
 
     try {
@@ -199,6 +201,7 @@ describe("wrapPgPool() + Drizzle 0.45 Neon WebSocket Pool integration", () => {
   it("leaves zero auditstream= entries in pg_prepared_statements on Neon WebSocket pool of 1", async () => {
     await resetAuditState();
     const pool = wrapPgPool(new NeonPool({ connectionString: proxy.urlFor(db.database), max: 1 }));
+    pool.on("error", () => {});
     const orm = drizzle({ client: pool });
 
     try {

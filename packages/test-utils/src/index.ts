@@ -11,8 +11,10 @@ import {
 import {
   DEFAULT_NEON_PROXY_IMAGE,
   type NeonProxyInstance,
+  type NeonProxyReadinessOptions,
   type StartNeonProxyOptions,
   startNeonProxyForCluster,
+  waitForNeonProxyReady,
 } from "./neon.js";
 import { buildRoleSetupSql, PROTOTYPE_SCHEMA_SQL } from "./schema.js";
 
@@ -365,4 +367,10 @@ export async function startNeonProxy(
 }
 
 export { buildRoleSetupSql, PROTOTYPE_SCHEMA_SQL } from "./schema.js";
-export { DEFAULT_NEON_PROXY_IMAGE, type NeonProxyInstance, type StartNeonProxyOptions };
+export {
+  DEFAULT_NEON_PROXY_IMAGE,
+  type NeonProxyInstance,
+  type NeonProxyReadinessOptions,
+  type StartNeonProxyOptions,
+  waitForNeonProxyReady,
+};
