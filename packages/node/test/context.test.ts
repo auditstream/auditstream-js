@@ -283,6 +283,26 @@ describe("audit.as() scope propagation", () => {
     );
     expect(audit.current()).toBeUndefined();
   });
+
+  it("shares the same AsyncLocalStorage store across duplicated module instances", async () => {
+    const contextUrl = new URL("../src/context.js", import.meta.url);
+    const secondInstance = (await import(`${contextUrl.href}?dup=1`)) as {
+      audit: typeof audit;
+    };
+
+    expect(secondInstance.audit).not.toBe(audit);
+
+    const seenBySecond = await audit.as({ type: "user", id: "usr_shared_1" }, () =>
+      secondInstance.audit.current(),
+    );
+    expect(seenBySecond).toEqual({ actor: { type: "user", id: "usr_shared_1" } });
+
+    const seenByFirst = await secondInstance.audit.as({ type: "user", id: "usr_shared_2" }, () =>
+      audit.current(),
+    );
+    expect(seenByFirst).toEqual({ actor: { type: "user", id: "usr_shared_2" } });
+    expect(audit.current()).toBeUndefined();
+  });
 });
 
 describe("AsyncLocalStorage runtime portability guard", () => {

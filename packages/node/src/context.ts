@@ -124,7 +124,24 @@ export interface AuditNamespace {
 }
 
 const textEncoder = new TextEncoder();
-const scopeStorage = new AsyncLocalStorage<AuditScope>();
+
+// Share one AsyncLocalStorage instance per JS runtime via a process-wide Symbol so
+// multi-chunk server bundles (for example Next.js Turbopack Route Handlers and Server
+// Actions sharing a globalThis Prisma client) always observe the same active actor scope.
+const SCOPE_STORAGE_SYMBOL: unique symbol = Symbol.for("auditstream.node.scopeStorage.v1") as never;
+
+function getSharedScopeStorage(): AsyncLocalStorage<AuditScope> {
+  const globalStore = globalThis as Record<PropertyKey, unknown>;
+  const existing = globalStore[SCOPE_STORAGE_SYMBOL];
+  if (existing instanceof AsyncLocalStorage) {
+    return existing as AsyncLocalStorage<AuditScope>;
+  }
+  const created = new AsyncLocalStorage<AuditScope>();
+  globalStore[SCOPE_STORAGE_SYMBOL] = created;
+  return created;
+}
+
+const scopeStorage = getSharedScopeStorage();
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

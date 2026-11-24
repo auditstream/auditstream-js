@@ -3,25 +3,24 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { PrismaClient } from "../../generated/prisma/client";
 
-const globalForPool = globalThis as typeof globalThis & {
+const globalForPrisma = globalThis as typeof globalThis & {
+  __auditstreamExamplePrisma?: PrismaClient;
   __auditstreamExamplePool?: pg.Pool;
 };
 
-// Keep the PrismaClient instance module-scoped while sharing the 5-connection pg.Pool on
-// globalThis. In Next.js 16 Turbopack builds, Route Handlers and Server Actions can run in
-// separate server chunks; keeping PrismaClient module-scoped ensures its `auditstream()`
-// SQL comments plugin reads the same chunk's AsyncLocalStorage store as `withAudit`/`auditAction`.
-let modulePrisma: PrismaClient | undefined;
-
 /**
- * Returns a Prisma 7 client wired with `PrismaPg` over a shared `pg.Pool({ max: 5 })` and
- * the `@auditstream/prisma` SQL comments plugin.
+ * Returns a shared `globalThis` Prisma 7 client wired with `PrismaPg` (`max: 5`) and the
+ * `@auditstream/prisma` SQL comments plugin.
+ *
+ * Because `@auditstream/node` stores its `AsyncLocalStorage` on a shared `Symbol.for` slot
+ * on `globalThis`, Route Handlers (`withAudit`) and Server Actions (`auditAction`) share
+ * the same active actor scope even when bundled into separate Next.js server chunks.
  *
  * Never configure `statementNameGenerator` on `PrismaPg` alongside SQL comments.
  */
 export function getPrisma(): PrismaClient {
-  if (modulePrisma) {
-    return modulePrisma;
+  if (globalForPrisma.__auditstreamExamplePrisma) {
+    return globalForPrisma.__auditstreamExamplePrisma;
   }
 
   const connectionString = process.env.DATABASE_URL;
@@ -29,13 +28,14 @@ export function getPrisma(): PrismaClient {
     throw new Error("DATABASE_URL is required");
   }
 
-  const pool = globalForPool.__auditstreamExamplePool ?? new pg.Pool({ connectionString, max: 5 });
-  globalForPool.__auditstreamExamplePool = pool;
-
+  const pool = new pg.Pool({ connectionString, max: 5 });
   const adapter = new PrismaPg(pool);
-  modulePrisma = new PrismaClient({
+  const prisma = new PrismaClient({
     adapter,
     comments: [auditstream()],
   });
-  return modulePrisma;
+
+  globalForPrisma.__auditstreamExamplePool = pool;
+  globalForPrisma.__auditstreamExamplePrisma = prisma;
+  return prisma;
 }
