@@ -143,7 +143,7 @@ const entries: HistoryEntry[] = await audit.history(exec, query);
 const exported: ExportRecord = parseExportRecord(
   JSON.stringify({
     event_id: "01955f2e-7b2a-7c10-9a11-111111111111",
-    occurred_at: "2026-11-24T12:00:00.000Z",
+    occurred_at: "2026-11-24T12:00:00.000000Z",
     source: "db" satisfies EventSourceKind,
     schema_name: "public",
     table_name: "invoice",
@@ -191,28 +191,40 @@ const settingJson: string = setConfigValue(scope);
 void [encoded, alreadyTagged, decoded, settingJson, MAX_ENCODED_COMMENT_CHARS];
 ```
 
-### Express middleware (`@auditstream/node/express`)
+### Framework integrations
+
+> **Security:** Always resolve `actor.id` and `actor.tenant` from a verified session, signed cookie, or validated JWT — never directly from unverified client headers such as `x-user-id`. If a reverse proxy or Next.js `proxy` forwards identity in a request header, it must strip or overwrite that header on every incoming request to prevent actor spoofing.
+
+#### Express middleware (`@auditstream/node/express`)
 
 ```ts
 import {
   auditstream,
   type ExpressAuditOptions,
 } from "@auditstream/node/express";
-import express from "express";
+import express, { type Request } from "express";
+
+interface AuthenticatedRequest extends Request {
+  user?: { id: string; tenantId?: string };
+}
 
 const options: ExpressAuditOptions = {
   actor: (req) => {
-    const id = req.header("x-user-id");
-    return id ? { type: "user", id } : undefined;
+    const user = (req as AuthenticatedRequest).user;
+    if (!user) return undefined;
+    return user.tenantId
+      ? { type: "user", id: user.id, tenant: user.tenantId }
+      : { type: "user", id: user.id };
   },
   context: (req) => ({ requestId: req.header("x-request-id") ?? "req_unknown" }),
 };
 
 const app = express();
+// Mount after your authentication middleware populates `req.user` from a verified session or JWT.
 app.use(auditstream(options));
 ```
 
-### Hono middleware (`@auditstream/node/hono`)
+#### Hono middleware (`@auditstream/node/hono`)
 
 ```ts
 import {
@@ -221,10 +233,17 @@ import {
 } from "@auditstream/node/hono";
 import { Hono } from "hono";
 
+declare function verifySession(
+  authorization: string | undefined,
+): Promise<{ id: string; tenantId?: string } | null>;
+
 const options: HonoAuditOptions = {
-  actor: (c) => {
-    const id = c.req.header("x-user-id");
-    return id ? { type: "user", id } : undefined;
+  actor: async (c) => {
+    const session = await verifySession(c.req.header("authorization"));
+    if (!session) return undefined;
+    return session.tenantId
+      ? { type: "user", id: session.id, tenant: session.tenantId }
+      : { type: "user", id: session.id };
   },
 };
 
@@ -232,7 +251,7 @@ const app = new Hono();
 app.use("*", auditstream(options));
 ```
 
-### Next.js Route Handlers and Server Actions (`@auditstream/node/next`)
+#### Next.js Route Handlers and Server Actions (`@auditstream/node/next`)
 
 ```ts
 import {
@@ -242,17 +261,27 @@ import {
   withAudit,
 } from "@auditstream/node/next";
 
+declare function getVerifiedSession(
+  request?: Request,
+): Promise<{ userId: string; tenantId?: string } | null>;
+
 const routeOptions: NextAuditOptions = {
-  actor: (request) => {
-    const id = request.headers.get("x-user-id");
-    return id ? { type: "user", id } : undefined;
+  actor: async (request) => {
+    const session = await getVerifiedSession(request);
+    if (!session) return undefined;
+    return session.tenantId
+      ? { type: "user", id: session.userId, tenant: session.tenantId }
+      : { type: "user", id: session.userId };
   },
 };
 
 export const POST = withAudit(async (_request: Request) => new Response("ok"), routeOptions);
 
 const actionOptions: NextActionAuditOptions<[invoiceId: number]> = {
-  actor: () => ({ type: "user", id: "usr_42" }),
+  actor: async () => {
+    const session = await getVerifiedSession();
+    return session ? { type: "user", id: session.userId } : undefined;
+  },
 };
 
 export const approveInvoice = auditAction(async (invoiceId: number) => invoiceId, actionOptions);

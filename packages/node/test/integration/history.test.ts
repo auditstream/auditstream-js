@@ -61,6 +61,7 @@ describe("audit.history() live Postgres integration", () => {
     for (const entry of h10) {
       expect(typeof entry.id).toBe("string");
       expect(typeof entry.xact_id).toBe("string");
+      expect(entry.occurred_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
       expect(entry.source).toBe("db");
       expect(entry.table_name).toBe("invoice");
       expect(entry.db_user).toBe("app_user");
