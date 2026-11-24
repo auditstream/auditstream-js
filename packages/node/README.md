@@ -165,6 +165,38 @@ const val: JsonValue = [prim, recordId];
 void [entries, exported, val, MAX_HISTORY_LIMIT];
 ```
 
+### Querying history and application events (`audit.query`)
+
+Use `audit.query()` for filtered, keyset-paginated queries across both database trigger rows (`source: "db"`) and application events written by `audit.log()` (`source: "app"`, where `table_name` is `null`).
+
+> **Backend-only API:** `audit.query()` returns raw `HistoryEntry` rows including internal database metadata (`db_user`, `xact_id`, `table_oid`, `actor_source`) and raw `before`/`after` payloads. Always enforce authentication and tenant authorization on the server, and project each entry to an allowlisted client DTO before sending data to browsers. Note that `actor.tenant` is self-asserted actor metadata (absent when `actor` is `null`, `invalid`, or `jwt`); do not treat it as a replacement for row-level security. For high-QPS tenant feeds, add the opt-in partial expression indexes documented in [Opt-in tenant indexes](https://github.com/auditstream/auditstream/blob/main/docs/reference/cli/history.md#opt-in-tenant-indexes).
+
+```ts
+import {
+  type AuditQuery,
+  type AuditQueryExecutor,
+  type AuditQueryPage,
+  type AuditQueryValues,
+  audit,
+  MAX_QUERY_OPS,
+} from "@auditstream/node";
+
+const exec: AuditQueryExecutor = async (_text: string, _values: AuditQueryValues) => ({
+  rows: [],
+});
+
+const query: AuditQuery = {
+  tenant: "org_acme",
+  source: "app",
+  opPrefix: "invoice.",
+  since: "2026-11-01T00:00:00Z",
+  limit: 25,
+};
+
+const page: AuditQueryPage = await audit.query(exec, query);
+void [page.entries, page.nextCursor, page.hasMore, MAX_QUERY_OPS];
+```
+
 ### Transport codec helpers
 
 ORM adapters use `encodeScope()`, `decodeScope()`, `isTagged()`, `tagSql()`, and `setConfigValue()` directly.

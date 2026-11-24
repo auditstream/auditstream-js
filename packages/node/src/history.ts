@@ -179,7 +179,8 @@ export interface AuditHistoryQuery {
   readonly limit?: number | undefined;
 }
 
-const VALID_SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*$/;
+/** Internal schema identifier validation pattern shared with `query.ts`. */
+export const VALID_SCHEMA_PATTERN: RegExp = /^[a-z_][a-z0-9_]*$/;
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const RFC3339_UTC_MICROS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -190,6 +191,14 @@ const VALID_ACTOR_SOURCES: ReadonlySet<string> = new Set<ActorSource>([
   "invalid",
 ]);
 const VALID_SOURCES: ReadonlySet<string> = new Set<EventSourceKind>(["db", "app"]);
+
+/** Internal SQL projection list for the 18 normative history columns shared with `query.ts`. */
+export const HISTORY_SELECT_COLUMNS: string =
+  `id::text AS id, event_id::text AS event_id, ` +
+  `pg_catalog.to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at, ` +
+  `xact_id::text AS xact_id, ` +
+  `source, schema_name, table_name, table_oid, op, record_id, before, after, changed, ` +
+  `actor, context, actor_source, db_user, schema_version`;
 
 interface JsonParseReviverContext {
   readonly source?: string;
@@ -205,7 +214,8 @@ type JsonParseWithContext = (
   ) => unknown,
 ) => unknown;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+/** Internal plain-object check shared with `query.ts`. */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -443,7 +453,8 @@ function normalizeTableOid(raw: unknown): number | null {
   throw new AuditstreamError("INVALID_RECORD", "history row table_oid must be a number or null");
 }
 
-function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
+/** Internal row decoder shared with `query.ts`. */
+export function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
   const id =
     typeof row.id === "string" ? row.id : typeof row.id === "number" ? String(row.id) : null;
   if (id === null || id.length === 0) {
@@ -563,11 +574,7 @@ export async function readHistory(
   }
 
   const sql =
-    `SELECT id::text AS id, event_id::text AS event_id, ` +
-    `pg_catalog.to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at, ` +
-    `xact_id::text AS xact_id, ` +
-    `source, schema_name, table_name, table_oid, op, record_id, before, after, changed, ` +
-    `actor, context, actor_source, db_user, schema_version ` +
+    `SELECT ${HISTORY_SELECT_COLUMNS} ` +
     `FROM "${schema}"."changes" ` +
     `WHERE table_name = $1::text AND record_id = $2::jsonb ` +
     `ORDER BY occurred_at DESC, id DESC ` +

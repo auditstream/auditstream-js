@@ -59,7 +59,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function encodeBase64UrlUnpadded(bytes: Uint8Array): string {
+/**
+ * Internal RFC 4648 unpadded base64url encoder shared with `query.ts` cursors.
+ */
+export function encodeBase64UrlUnpadded(bytes: Uint8Array): string {
   let out = "";
   const len = bytes.length;
   let i = 0;
@@ -100,9 +103,15 @@ function decodeBase64UrlChar(encoded: string, index: number): number {
   return code < 128 ? (BASE64URL_DECODE_LUT[code] ?? -1) : -1;
 }
 
-function decodeBase64UrlUnpadded(encoded: string): Uint8Array | null {
+/**
+ * Internal RFC 4648 unpadded base64url decoder shared with `query.ts` cursors.
+ */
+export function decodeBase64UrlUnpadded(
+  encoded: string,
+  maxLen: number = MAX_ENCODED_COMMENT_CHARS,
+): Uint8Array | null {
   const len = encoded.length;
-  if (len === 0 || len > MAX_ENCODED_COMMENT_CHARS || len % 4 === 1) {
+  if (len === 0 || len > maxLen || len % 4 === 1) {
     return null;
   }
 

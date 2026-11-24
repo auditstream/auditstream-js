@@ -37,6 +37,14 @@ import {
   logEvent,
   MAX_ACTION_LENGTH,
 } from "./log.js";
+import {
+  type AuditQuery,
+  type AuditQueryExecutor,
+  type AuditQueryPage,
+  type AuditQueryValues,
+  MAX_QUERY_OPS,
+  queryHistory,
+} from "./query.js";
 
 /** Package identifier exported by the workspace skeleton. */
 export const PACKAGE_NAME: "@auditstream/node" = "@auditstream/node";
@@ -72,17 +80,24 @@ export interface AuditNamespace {
    * (`occurred_at DESC, id DESC`), using the caller's database connection (`exec`).
    */
   history(exec: AuditHistoryExecutor, query: AuditHistoryQuery): Promise<HistoryEntry[]>;
+
+  /**
+   * Queries `{schema}.changes` (including application events logged with `audit.log()`) using
+   * validated filters and lossless microsecond keyset pagination (`occurred_at DESC, id DESC`).
+   */
+  query(exec: AuditQueryExecutor, query: AuditQuery): Promise<AuditQueryPage>;
 }
 
 /**
  * Shared Auditstream runtime entry point providing `audit.as()`, `audit.current()`,
- * `audit.log()`, and `audit.history()`.
+ * `audit.log()`, `audit.history()`, and `audit.query()`.
  */
 export const audit: AuditNamespace = Object.freeze({
   as: contextAudit.as,
   current: contextAudit.current,
   log: logEvent,
   history: readHistory,
+  query: queryHistory,
 });
 
 export {
@@ -108,6 +123,10 @@ export {
   type AuditLogExecutor,
   type AuditLogValues,
   type AuditOp,
+  type AuditQuery,
+  type AuditQueryExecutor,
+  type AuditQueryPage,
+  type AuditQueryValues,
   type AuditScope,
   AuditstreamError,
   type AuditstreamErrorCode,
@@ -123,6 +142,7 @@ export {
   MAX_ACTION_LENGTH,
   MAX_HISTORY_LIMIT,
   MAX_PAYLOAD_BYTES,
+  MAX_QUERY_OPS,
   type NestedActor,
   parseExportRecord,
   SUPPORTED_SCHEMA_VERSION,
