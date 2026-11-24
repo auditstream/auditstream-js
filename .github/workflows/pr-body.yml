@@ -1,0 +1,60 @@
+name: Check PR body
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  pull-requests: read
+
+jobs:
+  ai-disclosure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate AI disclosure field
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          node - <<'EOF'
+          const body = (process.env.PR_BODY || "").replace(/\r\n/g, "\n");
+
+          const headingMatch = /^##\s+AI\s+disclosure\s*$/im.exec(body);
+          if (!headingMatch) {
+            console.error("Missing '## AI disclosure' section in pull request description.");
+            process.exit(1);
+          }
+
+          const afterHeading = body.slice(headingMatch.index + headingMatch[0].length);
+          const nextHeading = /^##\s+/m.exec(afterHeading);
+          const section = nextHeading ? afterHeading.slice(0, nextHeading.index) : afterHeading;
+          const cleanSection = section.replace(/<!--[\s\S]*?-->/g, "");
+
+          const checked = [...cleanSection.matchAll(/^\s*-\s*\[[xX]\]\s*(none|assisted|agent-authored)\b/gim)]
+            .map((m) => m[1].toLowerCase());
+
+          if (checked.length !== 1) {
+            console.error(
+              `AI disclosure must select exactly one of none, assisted, or agent-authored (found ${checked.length}).`,
+            );
+            process.exit(1);
+          }
+
+          const choice = checked[0];
+          if (choice === "assisted" || choice === "agent-authored") {
+            const toolMatch = /^\s*(?:-\s*)?Tool:\s*(.+)$/im.exec(cleanSection);
+            const toolValue = toolMatch ? toolMatch[1].trim() : "";
+            if (!toolValue || /^(n\/a|none|-+)$/i.test(toolValue)) {
+              console.error(
+                `AI disclosure '${choice}' requires a non-empty 'Tool:' line naming the tool used.`,
+              );
+              process.exit(1);
+            }
+          }
+
+          console.log(`AI disclosure valid: ${choice}`);
+          EOF
