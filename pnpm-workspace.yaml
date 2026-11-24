@@ -14,6 +14,7 @@ allowBuilds:
 catalog:
   "@arethetypeswrong/cli": "^0.18.5"
   "@biomejs/biome": "^2.6.8"
+  "@hono/node-server": "2.1.11"
   "@microsoft/api-extractor": "^7.60.1"
   "@neondatabase/serverless": "1.2.1"
   "@prisma/adapter-neon": "7.10.1"
@@ -26,6 +27,7 @@ catalog:
   "@vitest/coverage-v8": "^5.1.1"
   "drizzle-orm": "0.45.4"
   "drizzle-orm-v1": "npm:drizzle-orm@1.0.0-rc.6"
+  "hono": "4.13.20"
   "pg": "8.23.1"
   "postgres": "3.4.7"
   "prisma": "7.10.1"
