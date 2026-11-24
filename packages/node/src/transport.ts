@@ -4,6 +4,8 @@ import {
   type AuditScope,
   AuditstreamError,
   audit,
+  type CachedScopePayload,
+  getCachedScopePayload,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
 } from "./context.js";
@@ -40,13 +42,14 @@ const VALID_ACTOR_TYPES: ReadonlySet<string> = new Set<ActorType>([
 ]);
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-const BASE64URL_DECODE_TABLE: ReadonlyMap<number, number> = new Map(
-  Array.from(BASE64URL_ALPHABET, (char, index) => [char.charCodeAt(0), index]),
-);
+const BASE64URL_DECODE_LUT = new Int8Array(128).fill(-1);
+for (let i = 0; i < BASE64URL_ALPHABET.length; i++) {
+  BASE64URL_DECODE_LUT[BASE64URL_ALPHABET.codePointAt(i) ?? 0] = i;
+}
 
-const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
 const TRAILING_COMMENT_REGEX = /\/\*([^/]*)\*\/[\s;]*$/;
-const AUDITSTREAM_KEY_REGEX = /(?:^|,)auditstream='([^']*)'/;
+const AUDITSTREAM_PREFIX = "auditstream='";
+const COMMA_AUDITSTREAM_PREFIX = ",auditstream='";
 const TAIL_SLICE_CHARS = 4096;
 
 const utf8Encoder = new TextEncoder();
@@ -92,46 +95,52 @@ function encodeBase64UrlUnpadded(bytes: Uint8Array): string {
   return out;
 }
 
+function decodeBase64UrlChar(encoded: string, index: number): number {
+  const code = encoded.codePointAt(index) ?? 128;
+  return code < 128 ? (BASE64URL_DECODE_LUT[code] ?? -1) : -1;
+}
+
 function decodeBase64UrlUnpadded(encoded: string): Uint8Array | null {
   const len = encoded.length;
   if (len === 0 || len > MAX_ENCODED_COMMENT_CHARS || len % 4 === 1) {
     return null;
   }
-  if (!BASE64URL_PATTERN.test(encoded)) {
-    return null;
-  }
 
   const byteLen = Math.floor((len * 3) / 4);
   const out = new Uint8Array(byteLen);
+  const rem = len % 4;
+  const fullEnd = len - rem;
   let outIdx = 0;
 
-  for (let i = 0; i < len; i += 4) {
-    const c0 = BASE64URL_DECODE_TABLE.get(encoded.charCodeAt(i));
-    const c1 = BASE64URL_DECODE_TABLE.get(encoded.charCodeAt(i + 1));
-    if (c0 === undefined || c1 === undefined) {
+  for (let i = 0; i < fullEnd; i += 4) {
+    const c0 = decodeBase64UrlChar(encoded, i);
+    const c1 = decodeBase64UrlChar(encoded, i + 1);
+    const c2 = decodeBase64UrlChar(encoded, i + 2);
+    const c3 = decodeBase64UrlChar(encoded, i + 3);
+    if ((c0 | c1 | c2 | c3) < 0) {
       return null;
     }
+    out[outIdx++] = (c0 << 2) | (c1 >> 4);
+    out[outIdx++] = ((c1 & 0x0f) << 4) | (c2 >> 2);
+    out[outIdx++] = ((c2 & 0x03) << 6) | c3;
+  }
 
-    const rem = len - i;
-    if (rem === 2) {
-      out[outIdx++] = (c0 << 2) | (c1 >> 4);
-    } else if (rem === 3) {
-      const c2 = BASE64URL_DECODE_TABLE.get(encoded.charCodeAt(i + 2));
-      if (c2 === undefined) {
-        return null;
-      }
-      out[outIdx++] = (c0 << 2) | (c1 >> 4);
-      out[outIdx++] = ((c1 & 0x0f) << 4) | (c2 >> 2);
-    } else {
-      const c2 = BASE64URL_DECODE_TABLE.get(encoded.charCodeAt(i + 2));
-      const c3 = BASE64URL_DECODE_TABLE.get(encoded.charCodeAt(i + 3));
-      if (c2 === undefined || c3 === undefined) {
-        return null;
-      }
-      out[outIdx++] = (c0 << 2) | (c1 >> 4);
-      out[outIdx++] = ((c1 & 0x0f) << 4) | (c2 >> 2);
-      out[outIdx++] = ((c2 & 0x03) << 6) | c3;
+  if (rem === 2) {
+    const c0 = decodeBase64UrlChar(encoded, fullEnd);
+    const c1 = decodeBase64UrlChar(encoded, fullEnd + 1);
+    if ((c0 | c1) < 0) {
+      return null;
     }
+    out[outIdx] = (c0 << 2) | (c1 >> 4);
+  } else if (rem === 3) {
+    const c0 = decodeBase64UrlChar(encoded, fullEnd);
+    const c1 = decodeBase64UrlChar(encoded, fullEnd + 1);
+    const c2 = decodeBase64UrlChar(encoded, fullEnd + 2);
+    if ((c0 | c1 | c2) < 0) {
+      return null;
+    }
+    out[outIdx++] = (c0 << 2) | (c1 >> 4);
+    out[outIdx] = ((c1 & 0x0f) << 4) | (c2 >> 2);
   }
 
   return out;
@@ -306,6 +315,76 @@ function serializeCanonicalPayload(scope: AuditScope): { json: string; bytes: Ui
   return { json, bytes };
 }
 
+function getOrEncodeCached(cached: CachedScopePayload): string {
+  if (cached.encoded === undefined) {
+    cached.encoded = encodeBase64UrlUnpadded(cached.bytes);
+  }
+  return cached.encoded;
+}
+
+function isAsciiWhitespaceOrSemicolon(code: number): boolean {
+  return (
+    code === 0x20 ||
+    code === 0x3b ||
+    code === 0x0a ||
+    code === 0x0d ||
+    code === 0x09 ||
+    code === 0x0c ||
+    code === 0x0b
+  );
+}
+
+function extractTrailingCommentBody(sql: string): string | null {
+  const len = sql.length;
+  const windowStart = Math.max(0, len - TAIL_SLICE_CHARS);
+  let end = len - 1;
+
+  while (end >= windowStart) {
+    const code = sql.codePointAt(end) ?? 0;
+    if (isAsciiWhitespaceOrSemicolon(code)) {
+      end--;
+      continue;
+    }
+    if (code > 0x7f) {
+      const commentMatch = TRAILING_COMMENT_REGEX.exec(sql.slice(windowStart));
+      return commentMatch?.[1] ?? null;
+    }
+    break;
+  }
+
+  // Need at least 4 characters inside the tail window for `/**/`.
+  if (end < windowStart + 3 || sql.codePointAt(end) !== 0x2f || sql.codePointAt(end - 1) !== 0x2a) {
+    return null;
+  }
+
+  const openSlash = sql.lastIndexOf("/", end - 2);
+  // Require openSlash <= end - 3 so `/*` and `*/` cannot overlap on a single `*` (for example `/*/`).
+  if (openSlash < windowStart || openSlash > end - 3 || sql.codePointAt(openSlash + 1) !== 0x2a) {
+    return null;
+  }
+
+  return sql.slice(openSlash + 2, end - 1);
+}
+
+function extractAuditstreamTagValue(body: string): string | null {
+  let valueStart: number;
+  if (body.startsWith(AUDITSTREAM_PREFIX)) {
+    valueStart = AUDITSTREAM_PREFIX.length;
+  } else {
+    const keyIdx = body.indexOf(COMMA_AUDITSTREAM_PREFIX);
+    if (keyIdx === -1) {
+      return null;
+    }
+    valueStart = keyIdx + COMMA_AUDITSTREAM_PREFIX.length;
+  }
+
+  const quoteIdx = body.indexOf("'", valueStart);
+  if (quoteIdx === -1) {
+    return null;
+  }
+  return body.slice(valueStart, quoteIdx);
+}
+
 /**
  * Validates `scope` against Auditstream Specification 0.1.0, serializes it into canonical
  * compact UTF-8 JSON (key order `type`, `id`, `onBehalfOf`, `tenant`, `context`), and
@@ -317,6 +396,10 @@ function serializeCanonicalPayload(scope: AuditScope): { json: string; bytes: Ui
  * @throws {@link AuditstreamError} if the actor/context is invalid or exceeds 512 UTF-8 bytes.
  */
 export function encodeScope(scope: AuditScope): string {
+  const cached = getCachedScopePayload(scope);
+  if (cached !== undefined) {
+    return getOrEncodeCached(cached);
+  }
   const { bytes } = serializeCanonicalPayload(scope);
   return encodeBase64UrlUnpadded(bytes);
 }
@@ -328,6 +411,10 @@ export function encodeScope(scope: AuditScope): string {
  * @throws {@link AuditstreamError} if the actor/context is invalid or exceeds 512 UTF-8 bytes.
  */
 export function setConfigValue(scope: AuditScope): string {
+  const cached = getCachedScopePayload(scope);
+  if (cached !== undefined) {
+    return cached.json;
+  }
   const { json } = serializeCanonicalPayload(scope);
   return json;
 }
@@ -337,16 +424,11 @@ export function setConfigValue(scope: AuditScope): string {
  * sqlcommenter key (with optional trailing ASCII whitespace or semicolons).
  */
 export function isTagged(sql: string): boolean {
-  const tail = sql.length > TAIL_SLICE_CHARS ? sql.slice(-TAIL_SLICE_CHARS) : sql;
-  const commentMatch = TRAILING_COMMENT_REGEX.exec(tail);
-  if (!commentMatch) {
+  const body = extractTrailingCommentBody(sql);
+  if (body === null) {
     return false;
   }
-  const body = commentMatch[1];
-  if (body === undefined) {
-    return false;
-  }
-  return AUDITSTREAM_KEY_REGEX.test(body);
+  return extractAuditstreamTagValue(body) !== null;
 }
 
 /**
@@ -366,6 +448,13 @@ export function tagSql(sql: string, scope: AuditScope | undefined = audit.curren
   if (isTagged(sql)) {
     return sql;
   }
+  const cached = getCachedScopePayload(scope);
+  if (cached !== undefined) {
+    if (cached.commentSuffix === undefined) {
+      cached.commentSuffix = ` /*auditstream='${getOrEncodeCached(cached)}'*/`;
+    }
+    return `${sql}${cached.commentSuffix}`;
+  }
   const encoded = encodeScope(scope);
   return `${sql} /*auditstream='${encoded}'*/`;
 }
@@ -382,25 +471,14 @@ export function tagSql(sql: string, scope: AuditScope | undefined = audit.curren
  * - Never throws on malformed input.
  */
 export function decodeScope(sql: string): DecodedTransport {
-  const tail = sql.length > TAIL_SLICE_CHARS ? sql.slice(-TAIL_SLICE_CHARS) : sql;
-  const commentMatch = TRAILING_COMMENT_REGEX.exec(tail);
-  if (!commentMatch) {
+  const body = extractTrailingCommentBody(sql);
+  if (body === null) {
     return { actor: null, context: null, actorSource: null };
   }
 
-  const body = commentMatch[1];
-  if (body === undefined) {
+  const rawValue = extractAuditstreamTagValue(body);
+  if (rawValue === null) {
     return { actor: null, context: null, actorSource: null };
-  }
-
-  const keyMatch = AUDITSTREAM_KEY_REGEX.exec(body);
-  if (!keyMatch) {
-    return { actor: null, context: null, actorSource: null };
-  }
-
-  const rawValue = keyMatch[1];
-  if (rawValue === undefined) {
-    return { actor: null, context: null, actorSource: "invalid" };
   }
 
   const bytes = decodeBase64UrlUnpadded(rawValue);
