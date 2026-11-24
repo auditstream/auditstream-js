@@ -4,8 +4,9 @@
   "type": "module",
   "packageManager": "pnpm@12.15.0",
   "scripts": {
-    "check": "biome ci . && turbo run typecheck build test && pnpm api:check && pnpm check:packages",
+    "check": "biome ci . && turbo run typecheck build test && pnpm api:check && pnpm check:packages && pnpm check:readme",
     "check:packages": "node scripts/check-packages.mjs",
+    "check:readme": "node scripts/check-readme-snippets.mjs",
     "api:check": "for f in packages/*/api-extractor*.json; do pnpm exec api-extractor run -c \"$f\" || exit 1; done",
     "api:update": "for f in packages/*/api-extractor*.json; do pnpm exec api-extractor run --local -c \"$f\" || exit 1; done",
     "lint": "biome ci .",
