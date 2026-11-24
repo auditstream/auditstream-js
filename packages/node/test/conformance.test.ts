@@ -76,14 +76,14 @@ function splitActorAndContext(raw: Record<string, unknown>): {
 const SKIPPED_PRECEDENCE_REASON =
   "precedence across set_config, comment, and JWT is resolved inside PostgreSQL triggers; covered by engine integration suite";
 
-describe("Spec 0.1.0 conformance fixtures", () => {
+describe("Spec 0.1.1 conformance fixtures", () => {
   it("conformance directory is non-empty and matches every SHA-256 pinned in conformance.json", () => {
     expect(existsSync(MANIFEST_PATH)).toBe(true);
     expect(existsSync(CONFORMANCE_DIR)).toBe(true);
 
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf8")) as ConformanceManifest;
-    expect(manifest.specVersion).toBe("0.1.0");
-    expect(manifest.tag).toBe("spec-v0.1.0");
+    expect(manifest.specVersion).toBe("0.1.1");
+    expect(manifest.tag).toBe("spec-v0.1.1");
     expect(manifest.tarballSha256).toMatch(/^[a-f0-9]{64}$/);
 
     const actualFiles = listFilesRecursive(CONFORMANCE_DIR);

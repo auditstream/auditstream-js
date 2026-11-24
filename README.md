@@ -4,7 +4,7 @@ TypeScript adapters and query helpers for [Auditstream](https://github.com/audit
 
 Application code never writes audit rows directly. These packages propagate the active actor through `AsyncLocalStorage` and attach it to outgoing SQL queries so PostgreSQL capture triggers record who acted — including delegated AI agents (`onBehalfOf`).
 
-**Status:** v0.1 (pre-1.0), targeting [Auditstream Specification 0.1.0 (`spec-v0.1.0`)](https://github.com/auditstream/auditstream/tree/spec-v0.1.0/spec).
+**Status:** v0.1 (pre-1.0), targeting [Auditstream Specification 0.1.1 (`spec-v0.1.1`)](https://github.com/auditstream/auditstream/tree/spec-v0.1.1/spec).
 
 ## Packages
 
@@ -51,7 +51,7 @@ Runnable end-to-end apps with real engine-generated migrations and live PostgreS
 
 ## Specification conformance
 
-`@auditstream/node` pins the `spec-v0.1.0` conformance fixtures in [`conformance.json`](conformance.json) (verified by SHA-256) and runs every transport encode/decode test case in CI (`packages/node/test/conformance.test.ts`), including without `globalThis.Buffer`.
+`@auditstream/node` pins the `spec-v0.1.1` conformance fixtures in [`conformance.json`](conformance.json) (verified by SHA-256) and runs every transport encode/decode test case in CI (`packages/node/test/conformance.test.ts`), including without `globalThis.Buffer`.
 
 ## Local development
 
