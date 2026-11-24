@@ -138,6 +138,7 @@ jobs:
           pnpm --filter @auditstream/test-utils test:integration
           pnpm --filter @auditstream/node test:integration
           pnpm --filter @auditstream/drizzle test:integration
+          pnpm --filter @auditstream/prisma test:integration
 
   packages:
     needs: lint
