@@ -21,7 +21,7 @@ DO $$ BEGIN
     EXECUTE 'CREATE ROLE auditstream_owner NOLOGIN';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
-    EXECUTE 'CREATE ROLE app_user LOGIN';
+    EXECUTE format('CREATE ROLE app_user LOGIN PASSWORD %L', ${pwLiteral});
   END IF;
   IF NOT pg_has_role(current_user, 'auditstream_owner', 'USAGE') THEN
     EXECUTE format('GRANT auditstream_owner TO %I', current_user);
@@ -30,7 +30,6 @@ DO $$ BEGIN
     EXECUTE format('GRANT app_user TO %I', current_user);
   END IF;
 END $$;
-ALTER ROLE app_user LOGIN PASSWORD ${pwLiteral};
 `;
 }
 

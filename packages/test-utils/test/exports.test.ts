@@ -7,4 +7,11 @@ describe("@auditstream/test-utils exports", () => {
     expect(typeof mod.startPgBouncer).toBe("function");
     expect(typeof mod.stopTestCluster).toBe("function");
   });
+
+  it("sets app_user password only on initial role creation to avoid rotating SCRAM salts", async () => {
+    const { buildRoleSetupSql } = await import("@auditstream/test-utils");
+    const sql = buildRoleSetupSql("s3cr'et");
+    expect(sql).toContain("CREATE ROLE app_user LOGIN PASSWORD");
+    expect(sql).not.toContain("ALTER ROLE app_user");
+  });
 });
