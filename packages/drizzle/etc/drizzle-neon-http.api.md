@@ -5,7 +5,17 @@
 ```ts
 
 // @public
+export interface NeonHttpClientLike {
+    (...args: never[]): unknown;
+    query: (...args: never[]) => unknown;
+    transaction?: (...args: never[]) => unknown;
+}
+
+// @public
 export const SUBPATH: "@auditstream/drizzle/neon-http";
+
+// @public
+export function wrapNeonHttp<TClient extends NeonHttpClientLike>(sql: TClient): TClient;
 
 // (No @packageDocumentation comment for this package)
 

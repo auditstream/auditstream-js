@@ -54,6 +54,7 @@
     "@types/node": "catalog:",
     "@types/pg": "catalog:",
     "drizzle-orm": "catalog:",
+    "drizzle-orm-v1": "catalog:",
     "pg": "catalog:",
     "postgres": "catalog:",
     "tsdown": "catalog:",
