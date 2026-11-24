@@ -513,32 +513,16 @@ export function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
   };
 }
 
-/**
- * Reads recorded audit history for a single record from `{schema}.changes`, ordered newest first
- * (`occurred_at DESC, id DESC`).
- *
- * - Sends one parameterized `SELECT` selecting only the 18 normative columns from
- *   `spec/history-table.md`, bound as `($1::text, $2::jsonb, $3::int)`.
- * - Validates `schema` against `^[a-z_][a-z0-9_]*$` before sending any SQL and double-quotes
- *   the identifier in the query.
- * - Defaults `limit` to `50` and enforces `1..=1000` (clamping values above `1000`? No,
- *   values above `1000` or below `1` throw {@link AuditstreamError} `INVALID_QUERY`).
- */
-export async function readHistory(
-  exec: AuditHistoryExecutor,
-  query: AuditHistoryQuery,
-): Promise<HistoryEntry[]> {
+/** Internal shared validation for `exec`, `query`, `schema`, and `limit`. */
+export function validateQueryBase(
+  exec: unknown,
+  query: unknown,
+): { readonly schema: string; readonly limit: number } {
   if (typeof exec !== "function") {
     throw new AuditstreamError("INVALID_QUERY", "exec must be a function");
   }
   if (!isPlainObject(query)) {
     throw new AuditstreamError("INVALID_QUERY", "query must be an object");
-  }
-  if (typeof query.table !== "string" || query.table.trim().length === 0) {
-    throw new AuditstreamError("INVALID_QUERY", "query.table must be a non-empty string");
-  }
-  if (!isPlainObject(query.recordId)) {
-    throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
   }
 
   const schema = query.schema ?? "auditstream";
@@ -562,9 +546,16 @@ export async function readHistory(
     );
   }
 
-  let recordIdJson: string;
+  return { schema, limit };
+}
+
+/** Internal shared serializer for `query.recordId`. */
+export function serializeRecordIdJson(raw: unknown): string {
+  if (!isPlainObject(raw)) {
+    throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
+  }
   try {
-    recordIdJson = JSON.stringify(query.recordId);
+    return JSON.stringify(raw);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new AuditstreamError(
@@ -572,6 +563,37 @@ export async function readHistory(
       `query.recordId is not JSON-serializable: ${detail}`,
     );
   }
+}
+
+/** Internal shared result row extractor accepting both row arrays and `{ rows }` objects. */
+export function extractQueryRows(
+  result: AuditHistoryQueryResult,
+): readonly Record<string, unknown>[] {
+  return Array.isArray(result)
+    ? result
+    : (result as { readonly rows: readonly Record<string, unknown>[] }).rows;
+}
+
+/**
+ * Reads recorded audit history for a single record from `{schema}.changes`, ordered newest first
+ * (`occurred_at DESC, id DESC`).
+ *
+ * - Sends one parameterized `SELECT` selecting only the 18 normative columns from
+ *   `spec/history-table.md`, bound as `($1::text, $2::jsonb, $3::int)`.
+ * - Validates `schema` against `^[a-z_][a-z0-9_]*$` before sending any SQL and double-quotes
+ *   the identifier in the query.
+ * - Defaults `limit` to `50` and enforces `1..=1000` (values outside `1..=1000` throw
+ *   {@link AuditstreamError} `INVALID_QUERY`).
+ */
+export async function readHistory(
+  exec: AuditHistoryExecutor,
+  query: AuditHistoryQuery,
+): Promise<HistoryEntry[]> {
+  const { schema, limit } = validateQueryBase(exec, query);
+  if (typeof query.table !== "string" || query.table.trim().length === 0) {
+    throw new AuditstreamError("INVALID_QUERY", "query.table must be a non-empty string");
+  }
+  const recordIdJson = serializeRecordIdJson(query.recordId);
 
   const sql =
     `SELECT ${HISTORY_SELECT_COLUMNS} ` +
@@ -581,8 +603,5 @@ export async function readHistory(
     `LIMIT $3::int`;
 
   const result = await exec(sql, [query.table, recordIdJson, limit]);
-  const rows = Array.isArray(result)
-    ? result
-    : (result as { readonly rows: readonly Record<string, unknown>[] }).rows;
-  return rows.map(rowToHistoryEntry);
+  return extractQueryRows(result).map(rowToHistoryEntry);
 }

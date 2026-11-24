@@ -2,15 +2,15 @@ import { AuditstreamError } from "./context.js";
 import {
   type AuditHistoryQueryResult,
   type AuditOp,
-  DEFAULT_HISTORY_LIMIT,
   type EventSourceKind,
+  extractQueryRows,
   HISTORY_SELECT_COLUMNS,
   type HistoryEntry,
   isPlainObject,
   type JsonObject,
-  MAX_HISTORY_LIMIT,
   rowToHistoryEntry,
-  VALID_SCHEMA_PATTERN,
+  serializeRecordIdJson,
+  validateQueryBase,
 } from "./history.js";
 import { decodeBase64UrlUnpadded, encodeBase64UrlUnpadded } from "./transport.js";
 
@@ -234,21 +234,6 @@ function validateOps(raw: unknown): readonly string[] {
   return raw.map((item) => validateFilterString(item, "query.op[]"));
 }
 
-function serializeRecordId(raw: unknown): string {
-  if (!isPlainObject(raw)) {
-    throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
-  }
-  try {
-    return JSON.stringify(raw);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new AuditstreamError(
-      "INVALID_QUERY",
-      `query.recordId is not JSON-serializable: ${detail}`,
-    );
-  }
-}
-
 function pushOpPredicates(
   ops: readonly string[],
   predicates: string[],
@@ -309,7 +294,7 @@ function buildPredicates(query: AuditQuery, values: AuditQueryValues): string[] 
     predicates.push(`table_name = ${bind(validateFilterString(query.table, "query.table"))}::text`);
   }
   if (query.recordId !== undefined) {
-    predicates.push(`record_id = ${bind(serializeRecordId(query.recordId))}::jsonb`);
+    predicates.push(`record_id = ${bind(serializeRecordIdJson(query.recordId))}::jsonb`);
   }
   if (query.actor !== undefined) {
     const p = bind(validateFilterString(query.actor, "query.actor"));
@@ -356,33 +341,7 @@ export async function queryHistory(
   exec: AuditQueryExecutor,
   query: AuditQuery,
 ): Promise<AuditQueryPage> {
-  if (typeof exec !== "function") {
-    throw new AuditstreamError("INVALID_QUERY", "exec must be a function");
-  }
-  if (!isPlainObject(query)) {
-    throw new AuditstreamError("INVALID_QUERY", "query must be an object");
-  }
-
-  const schema = query.schema ?? "auditstream";
-  if (typeof schema !== "string" || !VALID_SCHEMA_PATTERN.test(schema)) {
-    throw new AuditstreamError(
-      "INVALID_QUERY",
-      `query.schema must match ^[a-z_][a-z0-9_]*$ (got ${JSON.stringify(schema)})`,
-    );
-  }
-
-  const limit = query.limit ?? DEFAULT_HISTORY_LIMIT;
-  if (
-    typeof limit !== "number" ||
-    !Number.isInteger(limit) ||
-    limit < 1 ||
-    limit > MAX_HISTORY_LIMIT
-  ) {
-    throw new AuditstreamError(
-      "INVALID_QUERY",
-      `query.limit must be an integer between 1 and ${MAX_HISTORY_LIMIT} (got ${String(limit)})`,
-    );
-  }
+  const { schema, limit } = validateQueryBase(exec, query);
 
   if (query.unbounded !== undefined && typeof query.unbounded !== "boolean") {
     throw new AuditstreamError("INVALID_QUERY", "query.unbounded must be a boolean");
@@ -410,9 +369,7 @@ export async function queryHistory(
     `LIMIT ${limitParam}::int`;
 
   const result = await exec(sql, values);
-  const rows = Array.isArray(result)
-    ? result
-    : (result as { readonly rows: readonly Record<string, unknown>[] }).rows;
+  const rows = extractQueryRows(result);
 
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;

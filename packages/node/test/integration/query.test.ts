@@ -1,19 +1,30 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createTestDatabase, stopTestCluster, type TestDatabase } from "@auditstream/test-utils";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AuditQueryValues, audit, tagSql } from "../../src/index.js";
 
+const FIXTURE_DIR = dirname(fileURLToPath(import.meta.url));
+const LOG_EVENT_FIXTURE_SQL = readFileSync(resolve(FIXTURE_DIR, "fixtures/log-event.sql"), "utf8");
+
 describe("audit.query() live Postgres integration", () => {
   let db: TestDatabase;
+  let adminClient: pg.Client;
   let appPool: pg.Pool;
 
   beforeAll(async () => {
     db = await createTestDatabase();
+    adminClient = new pg.Client({ connectionString: db.adminUrl });
+    await adminClient.connect();
+    await adminClient.query(LOG_EVENT_FIXTURE_SQL);
     appPool = new pg.Pool({ connectionString: db.appUrl, max: 4 });
   });
 
   afterAll(async () => {
     await appPool?.end();
+    await adminClient?.end();
     await db?.drop();
     await stopTestCluster();
   });
