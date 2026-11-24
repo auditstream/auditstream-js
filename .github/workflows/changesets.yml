@@ -10,10 +10,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   changeset:
     if: github.head_ref != 'changeset-release/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,7 +30,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
           echo "Changed files:"
           echo "$CHANGED_FILES"
 
@@ -45,7 +50,7 @@ jobs:
             exit 0
           fi
 
-          ADDED_CHANGESETS=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- '.changeset/*.md' ':!.changeset/README.md')
+          ADDED_CHANGESETS=$(git diff --name-only --diff-filter=A "$BASE_SHA...$HEAD_SHA" -- '.changeset/*.md' ':!.changeset/README.md')
           if [ -z "$ADDED_CHANGESETS" ]; then
             echo "::error::Pull request changes public package files under packages/*/src/** or packages/*/package.json without adding a new .changeset/*.md file. Run 'pnpm changeset' to add one."
             exit 1
