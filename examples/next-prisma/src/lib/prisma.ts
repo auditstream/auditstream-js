@@ -39,3 +39,18 @@ export function getPrisma(): PrismaClient {
   globalForPrisma.__auditstreamExamplePrisma = prisma;
   return prisma;
 }
+
+/**
+ * Returns the shared `pg.Pool` (`max: 5`) backing `PrismaPg` so read-only
+ * `audit.query()` calls reuse the same pool without opening extra connections.
+ */
+export function getPool(): pg.Pool {
+  if (!globalForPrisma.__auditstreamExamplePool) {
+    getPrisma();
+  }
+  const pool = globalForPrisma.__auditstreamExamplePool;
+  if (!pool) {
+    throw new Error("Failed to initialize PostgreSQL pool");
+  }
+  return pool;
+}

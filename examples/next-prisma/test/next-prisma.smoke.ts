@@ -348,4 +348,178 @@ describe("examples/next-prisma smoke test", () => {
 
     expect(wrongActors).toBe(0);
   });
+
+  it("serves allowlisted Activity Feed DTOs across db and app events with keyset pagination and server-enforced tenant scoping", async () => {
+    // Seed 3 events under org_acme (db INSERT, db UPDATE, app invoice.exported) and 1 under org_beta.
+    const createAcme = await fetch(`${baseUrl}/api/invoices`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": "alice",
+        "x-demo-tenant": "org_acme",
+      },
+      body: JSON.stringify({ status: "draft", total: "75.00" }),
+    });
+    expect(createAcme.status).toBe(201);
+    const acmeInvoice = (await createAcme.json()) as InvoiceResponse;
+
+    const patchAcme = await fetch(`${baseUrl}/api/invoices/${acmeInvoice.id}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": "bob",
+        "x-demo-tenant": "org_acme",
+      },
+      body: JSON.stringify({ status: "approved", total: "90.00" }),
+    });
+    expect(patchAcme.status).toBe(200);
+
+    const exportAcme = await fetch(`${baseUrl}/api/invoices/${acmeInvoice.id}/export`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": "carol",
+        "x-demo-tenant": "org_acme",
+      },
+      body: JSON.stringify({ format: "csv" }),
+    });
+    expect(exportAcme.status).toBe(201);
+
+    const createBeta = await fetch(`${baseUrl}/api/invoices`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": "usr_42",
+        "x-demo-tenant": "org_beta",
+      },
+      body: JSON.stringify({ status: "beta-only", total: "15.00" }),
+    });
+    expect(createBeta.status).toBe(201);
+
+    interface ActivityItemDto {
+      readonly eventId: string;
+      readonly occurredAt: string;
+      readonly source: string;
+      readonly action: string;
+      readonly entity: string;
+      readonly recordId: string | null;
+      readonly changedFields: readonly string[];
+      readonly summary: string;
+      readonly actor: {
+        readonly id: string;
+        readonly type: string;
+        readonly displayName: string;
+      } | null;
+    }
+
+    interface ActivityPageDto {
+      readonly items: readonly ActivityItemDto[];
+      readonly nextCursor: string | null;
+      readonly hasMore: boolean;
+    }
+
+    // Page 1: pass adversarial ?tenant=org_beta query param; server must enforce x-demo-tenant=org_acme.
+    const page1Res = await fetch(`${baseUrl}/api/activity?limit=2&tenant=org_beta`, {
+      headers: { "x-demo-tenant": "org_acme" },
+    });
+    expect(page1Res.status).toBe(200);
+    const page1 = (await page1Res.json()) as ActivityPageDto;
+    expect(page1.items).toHaveLength(2);
+    expect(page1.hasMore).toBe(true);
+    expect(typeof page1.nextCursor).toBe("string");
+    expect(page1.nextCursor?.length).toBeGreaterThan(0);
+
+    // Page 2 via opaque keyset nextCursor.
+    const page2Res = await fetch(
+      `${baseUrl}/api/activity?limit=2&cursor=${encodeURIComponent(page1.nextCursor ?? "")}`,
+      { headers: { "x-demo-tenant": "org_acme" } },
+    );
+    expect(page2Res.status).toBe(200);
+    const page2 = (await page2Res.json()) as ActivityPageDto;
+    expect(page2.items).toHaveLength(1);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.nextCursor).toBeNull();
+
+    const allItems = [...page1.items, ...page2.items];
+    expect(new Set(allItems.map((item) => item.eventId)).size).toBe(3);
+
+    // Every item strictly matches the allowlisted client DTO (no internal columns or raw snapshots).
+    const allowedKeys = [
+      "action",
+      "actor",
+      "changedFields",
+      "entity",
+      "eventId",
+      "occurredAt",
+      "recordId",
+      "source",
+      "summary",
+    ];
+    for (const item of allItems) {
+      expect(Object.keys(item).sort()).toEqual(allowedKeys);
+      for (const forbidden of [
+        "id",
+        "xact_id",
+        "table_oid",
+        "db_user",
+        "actor_source",
+        "before",
+        "after",
+        "context",
+        "schema_version",
+      ]) {
+        expect(item).not.toHaveProperty(forbidden);
+      }
+    }
+
+    // Newest-first order: app invoice.exported -> db UPDATE -> db INSERT, with resolved actor names.
+    expect(allItems.map((item) => ({ source: item.source, action: item.action }))).toEqual([
+      { source: "app", action: "invoice.exported" },
+      { source: "db", action: "UPDATE" },
+      { source: "db", action: "INSERT" },
+    ]);
+    expect(allItems.map((item) => item.actor?.displayName)).toEqual([
+      "Carol Diaz",
+      "Bob Chen",
+      "Alice Rivera",
+    ]);
+    expect(allItems[0]?.summary).toContain("csv");
+    expect(allItems[1]?.changedFields).toEqual(["status", "total"]);
+
+    // Filter by source=app and opPrefix=invoice.
+    const appOnlyRes = await fetch(`${baseUrl}/api/activity?source=app&opPrefix=invoice.`, {
+      headers: { "x-demo-tenant": "org_acme" },
+    });
+    expect(appOnlyRes.status).toBe(200);
+    const appOnly = (await appOnlyRes.json()) as ActivityPageDto;
+    expect(appOnly.items).toHaveLength(1);
+    expect(appOnly.items[0]?.action).toBe("invoice.exported");
+    expect(appOnly.hasMore).toBe(false);
+
+    // Date window filter (future since -> empty page).
+    const emptyRes = await fetch(`${baseUrl}/api/activity?since=2099-01-01`, {
+      headers: { "x-demo-tenant": "org_acme" },
+    });
+    expect(emptyRes.status).toBe(200);
+    const emptyPage = (await emptyRes.json()) as ActivityPageDto;
+    expect(emptyPage.items).toEqual([]);
+    expect(emptyPage.hasMore).toBe(false);
+    expect(emptyPage.nextCursor).toBeNull();
+
+    // Validation errors return HTTP 400.
+    const badSourceRes = await fetch(`${baseUrl}/api/activity?source=invalid`);
+    expect(badSourceRes.status).toBe(400);
+    const badCursorRes = await fetch(`${baseUrl}/api/activity?cursor=not-a-valid-cursor`);
+    expect(badCursorRes.status).toBe(400);
+
+    // SSR Activity Feed page renders cleanly with resolved actor names.
+    const feedPageRes = await fetch(`${baseUrl}/activity`, {
+      headers: { "x-demo-tenant": "org_acme" },
+    });
+    expect(feedPageRes.status).toBe(200);
+    const feedHtml = await feedPageRes.text();
+    expect(feedHtml).toContain("Activity Feed");
+    expect(feedHtml).toContain("Carol Diaz");
+    expect(feedHtml).toContain("invoice.exported");
+  });
 });

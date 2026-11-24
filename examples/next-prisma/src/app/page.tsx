@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { updateInvoiceStatusForm } from "./actions";
 
@@ -8,8 +9,9 @@ export default function HomePage(): ReactNode {
     <main>
       <h1>Auditstream Next.js 16 + Prisma 7 Example</h1>
       <p>
-        Use the Route Handlers under <code>/api/invoices</code> or submit the Server Action form
-        below.
+        Use the Route Handlers under <code>/api/invoices</code>, submit the Server Action form
+        below, or open the <Link href="/activity">Activity Feed</Link> powered by{" "}
+        <code>audit.query()</code>.
       </p>
       <form action={updateInvoiceStatusForm}>
         <label>
