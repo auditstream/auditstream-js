@@ -1,0 +1,54 @@
+name: Check changesets
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: read
+
+jobs:
+  changeset:
+    if: github.head_ref != 'changeset-release/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Require changeset when package files change
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          NEEDS_CHANGESET=false
+          while IFS= read -r file; do
+            case "$file" in
+              packages/test-utils/*)
+                ;;
+              packages/*/src/*|packages/*/package.json)
+                NEEDS_CHANGESET=true
+                ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if [ "$NEEDS_CHANGESET" = "false" ]; then
+            echo "No public package source or manifest changes detected; changeset not required."
+            exit 0
+          fi
+
+          ADDED_CHANGESETS=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" -- '.changeset/*.md' ':!.changeset/README.md')
+          if [ -z "$ADDED_CHANGESETS" ]; then
+            echo "::error::Pull request changes public package files under packages/*/src/** or packages/*/package.json without adding a new .changeset/*.md file. Run 'pnpm changeset' to add one."
+            exit 1
+          fi
+
+          echo "Found new changeset file(s):"
+          echo "$ADDED_CHANGESETS"
