@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigestsToSemver"],
+  "timezone": "UTC",
+  "schedule": ["before 6am on Monday"],
+  "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "prBodyNotes": ["## AI disclosure\n\n- [x] none"],
+  "enabledManagers": ["npm", "github-actions"],
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "semanticCommitScope": "ci",
+      "pinDigests": true,
+      "groupName": "github-actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "matchDepTypes": ["peerDependencies"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "pnpm non-major dependencies",
+      "groupSlug": "pnpm-minor-patch"
+    }
+  ]
+}
