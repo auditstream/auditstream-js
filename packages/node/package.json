@@ -40,7 +40,8 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config ../../vitest.config.ts"
+    "test": "vitest run --config ../../vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "peerDependencies": {
     "express": "^4.21.0 || ^5.0.0",
@@ -59,12 +60,15 @@
     }
   },
   "devDependencies": {
+    "@auditstream/test-utils": "workspace:*",
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
     "express": "^5.3.0",
     "fast-check": "^4.11.0",
     "hono": "4.13.20",
     "next": "16.4.6",
+    "pg": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
