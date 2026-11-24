@@ -1,0 +1,37 @@
+{
+  "name": "@auditstream/example-next-prisma",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runnable Next.js 16 and Prisma 7 example with Auditstream actor capture",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "prisma:generate": "prisma generate --config prisma.config.ts",
+    "prisma:migrate": "prisma migrate deploy --config prisma.config.ts",
+    "build": "prisma generate --config prisma.config.ts && next build",
+    "typecheck": "tsc --noEmit",
+    "dev": "next dev",
+    "start": "next start",
+    "test:smoke": "vitest run --config vitest.smoke.config.ts"
+  },
+  "dependencies": {
+    "@auditstream/node": "workspace:*",
+    "@auditstream/prisma": "workspace:*",
+    "@prisma/adapter-pg": "catalog:",
+    "@prisma/client": "catalog:",
+    "next": "catalog:",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@auditstream/test-utils": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "prisma": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
