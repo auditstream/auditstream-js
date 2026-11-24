@@ -13,6 +13,9 @@ export interface Actor {
 }
 
 // @public
+export type ActorSource = "set_config" | "comment" | "jwt" | "invalid";
+
+// @public
 export type ActorType = "user" | "api_key" | "ai_agent" | "service" | "system";
 
 // @public
@@ -53,6 +56,25 @@ export class AuditstreamError extends Error {
 export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE";
 
 // @public
+export interface DecodedTransport {
+    readonly actor: Record<string, unknown> | null;
+    readonly actorSource: "comment" | "invalid" | null;
+    readonly context: Record<string, unknown> | null;
+}
+
+// @public
+export function decodeScope(sql: string): DecodedTransport;
+
+// @public
+export function encodeScope(scope: AuditScope): string;
+
+// @public
+export function isTagged(sql: string): boolean;
+
+// @public
+export const MAX_ENCODED_COMMENT_CHARS: 683;
+
+// @public
 export const MAX_PAYLOAD_BYTES: 512;
 
 // @public
@@ -65,6 +87,12 @@ export interface NestedActor {
 
 // @public
 export const PACKAGE_NAME: "@auditstream/node";
+
+// @public
+export function setConfigValue(scope: AuditScope): string;
+
+// @public
+export function tagSql(sql: string, scope?: AuditScope | undefined): string;
 
 // (No @packageDocumentation comment for this package)
 

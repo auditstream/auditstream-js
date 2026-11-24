@@ -1,0 +1,415 @@
+{
+  "spec": "0.1.0",
+  "kind": "capture",
+  "cases": [
+    {
+      "name": "table-without-primary-key",
+      "description": "Tables without a primary key are captured with record_id = null on INSERT, UPDATE, and DELETE.",
+      "input": {
+        "schema_sql": "CREATE TABLE scratch_log (tag text NOT NULL, payload text);",
+        "excluded_columns": {
+          "scratch_log": []
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO scratch_log VALUES ('a','v1'),('b','v2') /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          },
+          {
+            "sql": "UPDATE scratch_log SET payload='v1b' WHERE tag='a' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          },
+          {
+            "sql": "DELETE FROM scratch_log WHERE tag='b' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "scratch_log",
+            "op": "INSERT",
+            "record_id": null,
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "payload",
+              "tag"
+            ]
+          },
+          {
+            "table_name": "scratch_log",
+            "op": "INSERT",
+            "record_id": null,
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "payload",
+              "tag"
+            ]
+          },
+          {
+            "table_name": "scratch_log",
+            "op": "UPDATE",
+            "record_id": null,
+            "changed": [
+              "payload"
+            ],
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "payload",
+              "tag"
+            ],
+            "after_keys": [
+              "payload",
+              "tag"
+            ]
+          },
+          {
+            "table_name": "scratch_log",
+            "op": "DELETE",
+            "record_id": null,
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "payload",
+              "tag"
+            ],
+            "after_keys": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "partitioned-user-table",
+      "description": "Range-partitioned user table with triggers on the parent captures INSERT, UPDATE, and DELETE routed through the parent.",
+      "input": {
+        "schema_sql": "CREATE TABLE ledger (id int NOT NULL, bucket date NOT NULL, amount numeric NOT NULL, PRIMARY KEY (id, bucket)) PARTITION BY RANGE (bucket);\nCREATE TABLE ledger_2026 PARTITION OF ledger FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');",
+        "excluded_columns": {
+          "ledger": []
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO ledger VALUES (1,'2026-11-01',10.50),(2,'2026-11-02',20.00) /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          },
+          {
+            "sql": "UPDATE ledger SET amount=15.75 WHERE id=1 AND bucket='2026-11-01' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          },
+          {
+            "sql": "DELETE FROM ledger WHERE id=2 AND bucket='2026-11-02' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "ledger",
+            "op": "INSERT",
+            "record_id": {
+              "bucket": "2026-11-01",
+              "id": 1
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "amount",
+              "bucket",
+              "id"
+            ]
+          },
+          {
+            "table_name": "ledger",
+            "op": "INSERT",
+            "record_id": {
+              "bucket": "2026-11-02",
+              "id": 2
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "amount",
+              "bucket",
+              "id"
+            ]
+          },
+          {
+            "table_name": "ledger",
+            "op": "UPDATE",
+            "record_id": {
+              "bucket": "2026-11-01",
+              "id": 1
+            },
+            "changed": [
+              "amount"
+            ],
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "amount",
+              "bucket",
+              "id"
+            ],
+            "after_keys": [
+              "amount",
+              "bucket",
+              "id"
+            ]
+          },
+          {
+            "table_name": "ledger",
+            "op": "DELETE",
+            "record_id": {
+              "bucket": "2026-11-02",
+              "id": 2
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "amount",
+              "bucket",
+              "id"
+            ],
+            "after_keys": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "composite-pk-multi-row-and-cascade",
+      "description": "Composite primary key table with multi-row INSERT and cascading DELETE produces composite record_id objects.",
+      "input": {
+        "schema_sql": "CREATE TABLE project (tenant_id text NOT NULL, project_id int NOT NULL, name text NOT NULL, PRIMARY KEY (tenant_id, project_id));\nCREATE TABLE task (tenant_id text NOT NULL, project_id int NOT NULL, task_id int NOT NULL, title text NOT NULL, PRIMARY KEY (tenant_id, project_id, task_id), FOREIGN KEY (tenant_id, project_id) REFERENCES project(tenant_id, project_id) ON DELETE CASCADE);",
+        "excluded_columns": {
+          "project": [],
+          "task": []
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO project VALUES ('org_1',1,'alpha'),('org_1',2,'beta') /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          },
+          {
+            "sql": "INSERT INTO task VALUES ('org_1',1,100,'t1'),('org_1',1,101,'t2') /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          },
+          {
+            "sql": "DELETE FROM project WHERE tenant_id='org_1' AND project_id=1 /*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifX0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifX0'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "project",
+            "op": "INSERT",
+            "record_id": {
+              "project_id": 1,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "name",
+              "project_id",
+              "tenant_id"
+            ]
+          },
+          {
+            "table_name": "project",
+            "op": "INSERT",
+            "record_id": {
+              "project_id": 2,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "name",
+              "project_id",
+              "tenant_id"
+            ]
+          },
+          {
+            "table_name": "task",
+            "op": "INSERT",
+            "record_id": {
+              "project_id": 1,
+              "task_id": 100,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "project_id",
+              "task_id",
+              "tenant_id",
+              "title"
+            ]
+          },
+          {
+            "table_name": "task",
+            "op": "INSERT",
+            "record_id": {
+              "project_id": 1,
+              "task_id": 101,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "project_id",
+              "task_id",
+              "tenant_id",
+              "title"
+            ]
+          },
+          {
+            "table_name": "project",
+            "op": "DELETE",
+            "record_id": {
+              "project_id": 1,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "name",
+              "project_id",
+              "tenant_id"
+            ],
+            "after_keys": null
+          },
+          {
+            "table_name": "task",
+            "op": "DELETE",
+            "record_id": {
+              "project_id": 1,
+              "task_id": 100,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "project_id",
+              "task_id",
+              "tenant_id",
+              "title"
+            ],
+            "after_keys": null
+          },
+          {
+            "table_name": "task",
+            "op": "DELETE",
+            "record_id": {
+              "project_id": 1,
+              "task_id": 101,
+              "tenant_id": "org_1"
+            },
+            "changed": null,
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "project_id",
+              "task_id",
+              "tenant_id",
+              "title"
+            ],
+            "after_keys": null
+          }
+        ]
+      }
+    }
+  ]
+}

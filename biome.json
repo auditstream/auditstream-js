@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/dist", "!**/.turbo", "!**/.pack", "!**/*.md"]
+    "includes": ["**", "!**/dist", "!**/.turbo", "!**/.pack", "!**/*.md", "!conformance"]
   },
   "formatter": {
     "enabled": true,

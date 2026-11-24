@@ -1,0 +1,16 @@
+{
+  "specVersion": "0.1.0",
+  "repository": "auditstream/auditstream",
+  "tag": "spec-v0.1.0",
+  "asset": "auditstream-spec-0.1.0.tar.gz",
+  "tarballSha256": "b3cfc467ece119b99b890d1d4326bdf1fa1d6f7569fa0b03b0a1d9b5639d77d1",
+  "files": {
+    "README.md": "30413d86422f6af9b75ec3eebbe05382fbfa7382c72a9f04f0a37e5677198a07",
+    "capture/edge-tables.json": "5aab3a6c458951d0be80aadc3cc05d0a5940d486cd72e73c5b9fd136f31567fb",
+    "capture/kit-t1-t9.json": "c4a24f0fe2e059dacf1373d13b5d8758c3c118d23d2bdd6730eff026d24dc812",
+    "fixture.schema.json": "00556d4057b2cb4b03d8e0f88280eca8497d6bd72c413aacbc0e5d9d992b8e1d",
+    "transport/decode.json": "f9b2d4026b5f20f1f687e3b81473733fa71f55bd5344aced14cb90dd02c260f9",
+    "transport/encode.json": "0e4c64a2f3633c8f31fc358803a9c56e58722702944fe47bfc4e7646e9b4278d",
+    "transport/precedence.json": "001346f0454b6a07c681bc2c5602eb8b9a4b5f9ed14f6d8899941c0ce7a8af7c"
+  }
+}

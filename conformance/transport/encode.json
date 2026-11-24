@@ -1,0 +1,234 @@
+{
+  "spec": "0.1.0",
+  "kind": "transport_encode",
+  "cases": [
+    {
+      "name": "minimal-user",
+      "description": "Minimal user actor in canonical key order.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "usr_42"
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"user\",\"id\":\"usr_42\"}",
+        "encoded": "eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0",
+        "comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+      }
+    },
+    {
+      "name": "api-key-actor",
+      "description": "API key actor with tenant.",
+      "input": {
+        "actor": {
+          "type": "api_key",
+          "id": "key_9",
+          "tenant": "org_acme"
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"api_key\",\"id\":\"key_9\",\"tenant\":\"org_acme\"}",
+        "encoded": "eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkiLCJ0ZW5hbnQiOiJvcmdfYWNtZSJ9",
+        "comment": "/*auditstream='eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkiLCJ0ZW5hbnQiOiJvcmdfYWNtZSJ9'*/"
+      }
+    },
+    {
+      "name": "ai-agent-on-behalf-of-and-tenant",
+      "description": "Handbook AI agent acting on behalf of a user within a tenant.",
+      "input": {
+        "actor": {
+          "type": "ai_agent",
+          "id": "billing-agent",
+          "onBehalfOf": {
+            "type": "user",
+            "id": "usr_42"
+          },
+          "tenant": "org_acme"
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"ai_agent\",\"id\":\"billing-agent\",\"onBehalfOf\":{\"type\":\"user\",\"id\":\"usr_42\"},\"tenant\":\"org_acme\"}",
+        "encoded": "eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifSwidGVuYW50Ijoib3JnX2FjbWUifQ",
+        "comment": "/*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifSwidGVuYW50Ijoib3JnX2FjbWUifQ'*/"
+      }
+    },
+    {
+      "name": "service-with-context",
+      "description": "Service actor with requestId and source context.",
+      "input": {
+        "actor": {
+          "type": "service",
+          "id": "export-worker",
+          "tenant": "org_acme",
+          "context": {
+            "requestId": "req_01",
+            "source": "worker"
+          }
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"service\",\"id\":\"export-worker\",\"tenant\":\"org_acme\",\"context\":{\"requestId\":\"req_01\",\"source\":\"worker\"}}",
+        "encoded": "eyJ0eXBlIjoic2VydmljZSIsImlkIjoiZXhwb3J0LXdvcmtlciIsInRlbmFudCI6Im9yZ19hY21lIiwiY29udGV4dCI6eyJyZXF1ZXN0SWQiOiJyZXFfMDEiLCJzb3VyY2UiOiJ3b3JrZXIifX0",
+        "comment": "/*auditstream='eyJ0eXBlIjoic2VydmljZSIsImlkIjoiZXhwb3J0LXdvcmtlciIsInRlbmFudCI6Im9yZ19hY21lIiwiY29udGV4dCI6eyJyZXF1ZXN0SWQiOiJyZXFfMDEiLCJzb3VyY2UiOiJ3b3JrZXIifX0'*/"
+      }
+    },
+    {
+      "name": "system-with-opt-in-context",
+      "description": "System actor with all optional context fields including opt-in ip and userAgent.",
+      "input": {
+        "actor": {
+          "type": "system",
+          "id": "nightly-job",
+          "context": {
+            "requestId": "job_42",
+            "source": "cli",
+            "ip": "198.51.100.10",
+            "userAgent": "auditstream-cli/0.1.0"
+          }
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"system\",\"id\":\"nightly-job\",\"context\":{\"requestId\":\"job_42\",\"source\":\"cli\",\"ip\":\"198.51.100.10\",\"userAgent\":\"auditstream-cli/0.1.0\"}}",
+        "encoded": "eyJ0eXBlIjoic3lzdGVtIiwiaWQiOiJuaWdodGx5LWpvYiIsImNvbnRleHQiOnsicmVxdWVzdElkIjoiam9iXzQyIiwic291cmNlIjoiY2xpIiwiaXAiOiIxOTguNTEuMTAwLjEwIiwidXNlckFnZW50IjoiYXVkaXRzdHJlYW0tY2xpLzAuMS4wIn19",
+        "comment": "/*auditstream='eyJ0eXBlIjoic3lzdGVtIiwiaWQiOiJuaWdodGx5LWpvYiIsImNvbnRleHQiOnsicmVxdWVzdElkIjoiam9iXzQyIiwic291cmNlIjoiY2xpIiwiaXAiOiIxOTguNTEuMTAwLjEwIiwidXNlckFnZW50IjoiYXVkaXRzdHJlYW0tY2xpLzAuMS4wIn19'*/"
+      }
+    },
+    {
+      "name": "non-ascii-utf8-raw",
+      "description": "Foreign UTF-8 characters MUST be emitted raw without \\uXXXX escaping.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "usuário-日本語-🚀",
+          "tenant": "organização-東京"
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"user\",\"id\":\"usuário-日本語-🚀\",\"tenant\":\"organização-東京\"}",
+        "encoded": "eyJ0eXBlIjoidXNlciIsImlkIjoidXN1w6FyaW8t5pel5pys6KqeLfCfmoAiLCJ0ZW5hbnQiOiJvcmdhbml6YcOnw6NvLeadseS6rCJ9",
+        "comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXN1w6FyaW8t5pel5pys6KqeLfCfmoAiLCJ0ZW5hbnQiOiJvcmdhbml6YcOnw6NvLeadseS6rCJ9'*/"
+      }
+    },
+    {
+      "name": "base64url-unpadded-alphabet",
+      "description": "Payload exercising RFC 4648 base64url (- and _) with trailing '=' stripped.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "usr?>~?>>_?1"
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"user\",\"id\":\"usr?>~?>>_?1\"}",
+        "encoded": "eyJ0eXBlIjoidXNlciIsImlkIjoidXNyPz5-Pz4-Xz8xIn0",
+        "comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyPz5-Pz4-Xz8xIn0'*/"
+      }
+    },
+    {
+      "name": "exact-512-utf8-bytes",
+      "description": "Compact UTF-8 JSON of exactly 512 bytes (683 unpadded base64url chars) succeeds.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa"
+        }
+      },
+      "expected": {
+        "canonical_json": "{\"type\":\"user\",\"id\":\"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa\"}",
+        "encoded": "eyJ0eXBlIjoidXNlciIsImlkIjoiw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6lhIn0",
+        "comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoiw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6lhIn0'*/"
+      }
+    },
+    {
+      "name": "reject-513-utf8-bytes",
+      "description": "Compact UTF-8 JSON of 513 bytes exceeds the 512-byte limit and MUST fail.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééab"
+        }
+      },
+      "expected": {
+        "error": "payload_too_large"
+      }
+    },
+    {
+      "name": "reject-unknown-actor-type",
+      "description": "Actor type outside the 5 spec enum values MUST fail.",
+      "input": {
+        "actor": {
+          "type": "bot",
+          "id": "bot_1"
+        }
+      },
+      "expected": {
+        "error": "invalid_actor"
+      }
+    },
+    {
+      "name": "reject-empty-actor-id",
+      "description": "Empty actor id MUST fail.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": ""
+        }
+      },
+      "expected": {
+        "error": "invalid_actor"
+      }
+    },
+    {
+      "name": "reject-nested-on-behalf-of",
+      "description": "onBehalfOf nested deeper than one level MUST fail.",
+      "input": {
+        "actor": {
+          "type": "ai_agent",
+          "id": "agent_a",
+          "onBehalfOf": {
+            "type": "ai_agent",
+            "id": "agent_b",
+            "onBehalfOf": {
+              "type": "user",
+              "id": "usr_1"
+            }
+          }
+        }
+      },
+      "expected": {
+        "error": "invalid_actor"
+      }
+    },
+    {
+      "name": "reject-empty-tenant",
+      "description": "Empty tenant string MUST fail.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "usr_1",
+          "tenant": ""
+        }
+      },
+      "expected": {
+        "error": "invalid_actor"
+      }
+    },
+    {
+      "name": "reject-empty-context-field",
+      "description": "Empty string in context.requestId MUST fail.",
+      "input": {
+        "actor": {
+          "type": "user",
+          "id": "usr_1",
+          "context": {
+            "requestId": ""
+          }
+        }
+      },
+      "expected": {
+        "error": "invalid_context"
+      }
+    }
+  ]
+}

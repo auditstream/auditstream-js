@@ -1,0 +1,130 @@
+{
+  "spec": "0.1.0",
+  "kind": "transport_precedence",
+  "cases": [
+    {
+      "name": "set-config-over-comment-and-jwt",
+      "description": "Transaction-local set_config takes precedence over both trailing comment and JWT claims.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkifQ'*/;",
+        "set_config": "{\"type\":\"system\",\"id\":\"nightly-job\"}",
+        "jwt_claims": "{\"sub\":\"auth0|abc\",\"role\":\"authenticated\"}"
+      },
+      "expected": {
+        "actor": {
+          "type": "system",
+          "id": "nightly-job"
+        },
+        "context": null,
+        "actor_source": "set_config"
+      }
+    },
+    {
+      "name": "comment-over-jwt",
+      "description": "Trailing comment takes precedence over JWT claims when set_config is unset.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+        "set_config": null,
+        "jwt_claims": "{\"sub\":\"auth0|abc\",\"role\":\"authenticated\"}"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usr_42"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "jwt-alone",
+      "description": "JWT sub claim produces a user actor when neither set_config nor comment is present.",
+      "input": {
+        "sql": "UPDATE invoice SET total=55 WHERE id=2;",
+        "set_config": null,
+        "jwt_claims": "{\"sub\":\"auth0|abc\",\"role\":\"authenticated\"}"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "auth0|abc"
+        },
+        "context": null,
+        "actor_source": "jwt"
+      }
+    },
+    {
+      "name": "no-actor",
+      "description": "When set_config, comment, and JWT are all absent, actor and actor_source are null.",
+      "input": {
+        "sql": "UPDATE invoice SET total=55 WHERE id=2;",
+        "set_config": null,
+        "jwt_claims": null
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": null
+      }
+    },
+    {
+      "name": "empty-setting-after-commit-falls-through-to-comment",
+      "description": "Empty string in auditstream.actor (PostgreSQL's post-commit state) is treated as unset and falls through to comment.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+        "set_config": "",
+        "jwt_claims": null
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usr_42"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "empty-setting-after-commit-alone",
+      "description": "Empty string in auditstream.actor with no comment or JWT resolves to null.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1;",
+        "set_config": "",
+        "jwt_claims": null
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": null
+      }
+    },
+    {
+      "name": "malformed-set-config-does-not-fall-through",
+      "description": "Malformed auditstream.actor MUST yield invalid and MUST NOT fall through to a valid comment.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+        "set_config": "{broken-json",
+        "jwt_claims": "{\"sub\":\"auth0|abc\"}"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "malformed-comment-does-not-fall-through",
+      "description": "Malformed auditstream comment MUST yield invalid and MUST NOT fall through to valid JWT claims.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='!!!notbase64'*/;",
+        "set_config": null,
+        "jwt_claims": "{\"sub\":\"auth0|abc\"}"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    }
+  ]
+}
