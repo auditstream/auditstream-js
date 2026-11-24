@@ -138,6 +138,16 @@ describe("parseExportRecord()", () => {
       const parsed = parseExportRecord(line);
       expect(parsed.schema_version).toBe(1);
     }
+
+    // Closed 5-value actor.type enum in event.schema.json (top-level and nested onBehalfOf).
+    const baseObj = JSON.parse(VALID_EXAMPLES[0] ?? "{}") as Record<string, unknown>;
+    expect(validate({ ...baseObj, actor: { type: "bot", id: "b1" } })).toBe(false);
+    expect(
+      validate({
+        ...baseObj,
+        actor: { type: "ai_agent", id: "a1", onBehalfOf: { type: "bot", id: "b1" } },
+      }),
+    ).toBe(false);
   });
 
   it("preserves a 30-digit numeric in after unchanged on Node while keeping safe numbers numeric", () => {
@@ -186,6 +196,50 @@ describe("parseExportRecord()", () => {
         occurred_at: "2026-11-24T10:15:30.123456Z",
         source: "cli",
         op: "INSERT",
+        db_user: "app_user",
+        schema_version: 1,
+      }),
+      // Unknown actor.type outside closed 5-value enum
+      JSON.stringify({
+        event_id: "019ab123-4567-7000-8000-000000000001",
+        occurred_at: "2026-11-24T10:15:30.123456Z",
+        source: "db",
+        op: "INSERT",
+        actor: { type: "bot", id: "b1" },
+        db_user: "app_user",
+        schema_version: 1,
+      }),
+      // Nested onBehalfOf depth > 1
+      JSON.stringify({
+        event_id: "019ab123-4567-7000-8000-000000000001",
+        occurred_at: "2026-11-24T10:15:30.123456Z",
+        source: "db",
+        op: "INSERT",
+        actor: {
+          type: "ai_agent",
+          id: "a1",
+          onBehalfOf: { type: "ai_agent", id: "a2", onBehalfOf: { type: "user", id: "u1" } },
+        },
+        db_user: "app_user",
+        schema_version: 1,
+      }),
+      // Empty tenant
+      JSON.stringify({
+        event_id: "019ab123-4567-7000-8000-000000000001",
+        occurred_at: "2026-11-24T10:15:30.123456Z",
+        source: "db",
+        op: "INSERT",
+        actor: { type: "user", id: "u1", tenant: "" },
+        db_user: "app_user",
+        schema_version: 1,
+      }),
+      // Empty known context field
+      JSON.stringify({
+        event_id: "019ab123-4567-7000-8000-000000000001",
+        occurred_at: "2026-11-24T10:15:30.123456Z",
+        source: "db",
+        op: "INSERT",
+        context: { requestId: "" },
         db_user: "app_user",
         schema_version: 1,
       }),
@@ -336,6 +390,43 @@ describe("audit.history()", () => {
         ],
         { table: "invoice", recordId: { id: 9 } },
       ),
+    ).rejects.toMatchObject({ code: "INVALID_RECORD" });
+  });
+
+  it("rejects history rows with invalid actor.type or empty known context fields", async () => {
+    const baseRow = {
+      id: "103",
+      event_id: "019ab123-4567-7000-8000-000000000096",
+      occurred_at: "2026-11-24T10:15:30.123456Z",
+      xact_id: "503",
+      source: "db",
+      schema_name: "public",
+      table_name: "invoice",
+      table_oid: 16384,
+      op: "INSERT",
+      record_id: { id: 9 },
+      before: null,
+      after: { id: 9 },
+      changed: null,
+      actor: null,
+      context: null,
+      actor_source: null,
+      db_user: "app_user",
+      schema_version: 1,
+    };
+
+    await expect(
+      audit.history(() => [{ ...baseRow, actor: { type: "bot", id: "b1" } }], {
+        table: "invoice",
+        recordId: { id: 9 },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_RECORD" });
+
+    await expect(
+      audit.history(() => [{ ...baseRow, context: { source: "" } }], {
+        table: "invoice",
+        recordId: { id: 9 },
+      }),
     ).rejects.toMatchObject({ code: "INVALID_RECORD" });
   });
 

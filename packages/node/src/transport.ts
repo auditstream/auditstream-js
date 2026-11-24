@@ -40,6 +40,7 @@ const VALID_ACTOR_TYPES: ReadonlySet<string> = new Set<ActorType>([
   "service",
   "system",
 ]);
+const KNOWN_CONTEXT_KEYS: readonly string[] = ["requestId", "source", "ip", "userAgent"];
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const BASE64URL_DECODE_LUT = new Int8Array(128).fill(-1);
@@ -57,6 +58,59 @@ const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isValidOptionalNonEmptyString(obj: Record<string, unknown>, key: string): boolean {
+  return !Object.hasOwn(obj, key) || isNonEmptyString(obj[key]);
+}
+
+function isValidNestedActorObject(value: unknown): boolean {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  return (
+    typeof value.type === "string" &&
+    VALID_ACTOR_TYPES.has(value.type) &&
+    isNonEmptyString(value.id) &&
+    !Object.hasOwn(value, "onBehalfOf") &&
+    isValidOptionalNonEmptyString(value, "tenant")
+  );
+}
+
+/** Internal Spec 0.1.0 actor payload validator shared with `history.ts`. */
+export function isValidActorObject(value: unknown): boolean {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  if (
+    typeof value.type !== "string" ||
+    !VALID_ACTOR_TYPES.has(value.type) ||
+    !isNonEmptyString(value.id) ||
+    !isValidOptionalNonEmptyString(value, "tenant")
+  ) {
+    return false;
+  }
+  if (Object.hasOwn(value, "onBehalfOf") && !isValidNestedActorObject(value.onBehalfOf)) {
+    return false;
+  }
+  return true;
+}
+
+/** Internal Spec 0.1.0 context payload validator shared with `history.ts`. */
+export function isValidContextObject(value: unknown): value is Record<string, unknown> {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  for (const key of KNOWN_CONTEXT_KEYS) {
+    if (!isValidOptionalNonEmptyString(value, key)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -476,7 +530,10 @@ export function tagSql(sql: string, scope: AuditScope | undefined = audit.curren
  *   or no `auditstream` key is present.
  * - Returns `{ actor: null, context: null, actorSource: "invalid" }` when an `auditstream`
  *   key is present but malformed, oversized (over 512 UTF-8 bytes or 683 chars), padded,
- *   invalid UTF-8, non-JSON, or missing non-empty string `type`/`id`.
+ *   invalid UTF-8, non-JSON, or violates the `spec/actor.md` actor/context schema
+ *   (including the 5-value `type` enum, non-empty `id`/`tenant`, depth-1 `onBehalfOf`,
+ *   and object `context` with non-empty known fields).
+ * - Preserves unknown additive keys in `actor`, `onBehalfOf`, and `context`.
  * - Never throws on malformed input.
  */
 export function decodeScope(sql: string): DecodedTransport {
@@ -509,23 +566,22 @@ export function decodeScope(sql: string): DecodedTransport {
     return { actor: null, context: null, actorSource: "invalid" };
   }
 
-  if (
-    !isPlainObject(parsed) ||
-    typeof parsed.type !== "string" ||
-    parsed.type.length === 0 ||
-    typeof parsed.id !== "string" ||
-    parsed.id.length === 0
-  ) {
+  if (!isValidActorObject(parsed)) {
     return { actor: null, context: null, actorSource: "invalid" };
   }
 
+  const parsedObj = parsed as Record<string, unknown>;
   let context: Record<string, unknown> | null = null;
+  if (Object.hasOwn(parsedObj, "context")) {
+    if (!isValidContextObject(parsedObj.context)) {
+      return { actor: null, context: null, actorSource: "invalid" };
+    }
+    context = parsedObj.context;
+  }
+
   const actor: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(parsed)) {
+  for (const [key, value] of Object.entries(parsedObj)) {
     if (key === "context") {
-      if (isPlainObject(value)) {
-        context = value;
-      }
       continue;
     }
     actor[key] = value;
