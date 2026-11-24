@@ -43,6 +43,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install ${{ matrix.package }}@${{ matrix.tag }}
+        # zizmor: ignore[adhoc-packages] intentional weekly compatibility check against latest and rc ORM tags
         run: pnpm --filter "${{ matrix.filter }}" add -D "${{ matrix.package }}@${{ matrix.tag }}" --no-frozen-lockfile
       - run: pnpm build
       - name: Run ${{ matrix.orm }} integration suite (if present)

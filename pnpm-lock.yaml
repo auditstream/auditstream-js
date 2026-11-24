@@ -234,6 +234,9 @@ catalogs:
       specifier: ^5.1.1
       version: 5.1.1
 
+overrides:
+  effect: ^3.22.1
+
 importers:
 
   .:
@@ -294,7 +297,7 @@ importers:
         version: 0.45.4(@electric-sql/pglite@0.4.3)(@neondatabase/serverless@1.2.1)(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(typescript@6.0.3))(typescript@6.0.3))(@types/pg@8.23.1)(mysql2@3.24.4(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(typescript@6.0.3))
       drizzle-orm-v1:
         specifier: 'catalog:'
-        version: drizzle-orm@1.0.0-rc.6(@electric-sql/pglite@0.4.3)(@neondatabase/serverless@1.2.1)(@types/pg@8.23.1)(mysql2@3.24.4(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(valibot@1.4.2(typescript@6.0.3))
+        version: drizzle-orm@1.0.0-rc.6(@electric-sql/pglite@0.4.3)(@neondatabase/serverless@1.2.1)(@types/pg@8.23.1)(effect@3.22.5)(mysql2@3.24.4(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(valibot@1.4.2(typescript@6.0.3))
       pg:
         specifier: 'catalog:'
         version: 8.23.1
@@ -2160,7 +2163,7 @@ packages:
       arktype: '>=2.0.0'
       better-sqlite3: '>=9.3.0'
       bun-types: '*'
-      effect: '>=4.0.0'
+      effect: ^3.22.1
       expo-sqlite: '>=14.0.0'
       mssql: '>=11.0.1'
       mysql2: '>=2'
@@ -2288,8 +2291,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@3.20.0:
-    resolution: {integrity: sha512-qMLfDJscrNG8p/aw+IkT9W7fgj50Z4wG5bLBy0Txsxz8iUHjDIkOgO3SV0WZfnQbNG2VJYb0b+rDLMrhM4+Krw==}
+  effect@3.22.5:
+    resolution: {integrity: sha512-AdIU4llI19BzhJ4xUBZix7kS8oiYSlCsJ61j3UM3UyJw9ecDrsrrweDFm/Ku1nHbJWMLoynK+1Me4it3Zkmjpw==}
 
   elkjs@0.11.1:
     resolution: {integrity: sha512-zxxR9k+rx5ktMwT/FwyLdPCrq7xN6e4VGGHH8hA01vVYKjTFik7nHOxBnAYtrgYUB1RpAiLvA1/U2YraWxyKKg==}
@@ -4133,7 +4136,7 @@ snapshots:
     dependencies:
       c12: 3.3.4(magicast@0.5.5)
       deepmerge-ts: 8.0.2
-      effect: 3.20.0
+      effect: 3.22.5
       empathic: 2.0.0
     transitivePeerDependencies:
       - magicast
@@ -5138,11 +5141,12 @@ snapshots:
       postgres: 3.4.7
       prisma: 7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(typescript@6.0.3)
 
-  drizzle-orm@1.0.0-rc.6(@electric-sql/pglite@0.4.3)(@neondatabase/serverless@1.2.1)(@types/pg@8.23.1)(mysql2@3.24.4(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(valibot@1.4.2(typescript@6.0.3)):
+  drizzle-orm@1.0.0-rc.6(@electric-sql/pglite@0.4.3)(@neondatabase/serverless@1.2.1)(@types/pg@8.23.1)(effect@3.22.5)(mysql2@3.24.4(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(valibot@1.4.2(typescript@6.0.3)):
     optionalDependencies:
       '@electric-sql/pglite': 0.4.3
       '@neondatabase/serverless': 1.2.1
       '@types/pg': 8.23.1
+      effect: 3.22.5
       mysql2: 3.24.4(@types/node@22.20.5)
       pg: 8.23.1
       postgres: 3.4.7
@@ -5160,7 +5164,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@3.20.0:
+  effect@3.22.5:
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 3.23.2

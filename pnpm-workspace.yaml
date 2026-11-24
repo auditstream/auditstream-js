@@ -4,6 +4,9 @@ packages:
 
 autoInstallPeers: false
 minimumReleaseAge: 1440
+overrides:
+  # GHSA-7589-6fvf-x4pw (High, CVSS 8.7): ReDoS in effect <3.22.1 via @prisma/config.
+  "effect": "^3.22.1"
 allowBuilds:
   "@prisma/engines": false
   "cpu-features": false
