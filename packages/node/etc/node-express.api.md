@@ -4,8 +4,44 @@
 
 ```ts
 
+import { Request as Request_2 } from 'express';
+import { RequestHandler } from 'express';
+
 // @public
-export const SUBPATH: "@auditstream/node/express";
+export interface Actor {
+    readonly id: string;
+    readonly onBehalfOf?: NestedActor;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
+
+// @public
+export type ActorType = "user" | "api_key" | "ai_agent" | "service" | "system";
+
+// @public
+export interface AuditContext {
+    readonly ip?: string;
+    readonly requestId?: string;
+    readonly source?: string;
+    readonly userAgent?: string;
+}
+
+// @public
+export function auditstream(options: ExpressAuditOptions): RequestHandler;
+
+// @public
+export interface ExpressAuditOptions {
+    readonly actor: (req: Request_2) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (req: Request_2) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+}
+
+// @public
+export interface NestedActor {
+    readonly id: string;
+    readonly onBehalfOf?: never;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
 
 // (No @packageDocumentation comment for this package)
 
