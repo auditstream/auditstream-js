@@ -43,7 +43,7 @@
     "test": "vitest run --config ../../vitest.config.ts"
   },
   "peerDependencies": {
-    "@auditstream/node": "workspace:*",
+    "@auditstream/node": ">=0.1.0 <1.0.0",
     "drizzle-orm": "^0.45.2 || >=1.0.0-rc.1 <2.0.0"
   },
   "devDependencies": {

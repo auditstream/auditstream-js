@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      snapshot:
+        description: Publish an OIDC snapshot release under the `snapshot` dist-tag
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      snapshot: ${{ steps.check.outputs.snapshot }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check pending changesets
+        id: pending
+        run: |
+          pnpm changeset status --output=/tmp/cs-status.json || true
+          HAS_RELEASES=$(node -e "
+            const fs = require('node:fs');
+            if (!fs.existsSync('/tmp/cs-status.json')) {
+              console.log('false');
+              process.exit(0);
+            }
+            const data = JSON.parse(fs.readFileSync('/tmp/cs-status.json', 'utf8'));
+            console.log(Array.isArray(data.releases) && data.releases.length > 0 ? 'true' : 'false');
+          ")
+          echo "has_changesets=$HAS_RELEASES" >> "$GITHUB_OUTPUT"
+
+      - name: Mint GitHub App token
+        id: app-token
+        if: steps.pending.outputs.has_changesets == 'true' && inputs.snapshot != true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Create or update version pull request
+        id: changesets
+        if: steps.pending.outputs.has_changesets == 'true' && inputs.snapshot != true
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          version-script: pnpm version-packages
+          commit-message: "chore(ci): version packages"
+          pr-title: "chore(ci): version packages"
+          create-github-releases: false
+
+      - name: Ensure version pull request includes AI disclosure
+        if: steps.changesets.outputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          BODY=$(gh pr view "$PR_NUMBER" --json body -q .body)
+          if ! printf '%s\n' "$BODY" | grep -qiE '^##[[:space:]]+AI[[:space:]]+disclosure[[:space:]]*$'; then
+            printf '%s\n\n## AI disclosure\n\n- [x] none\n' "$BODY" | gh pr edit "$PR_NUMBER" --body-file -
+          fi
+
+      - name: Check for unpublished public package versions
+        id: check
+        env:
+          IS_SNAPSHOT: ${{ inputs.snapshot == true }}
+          HAS_CHANGESETS: ${{ steps.pending.outputs.has_changesets }}
+        run: |
+          if [ "$IS_SNAPSHOT" = "true" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "snapshot=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$HAS_CHANGESETS" = "true" ]; then
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "snapshot=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          UNPUBLISHED=false
+          for pkg in packages/node/package.json packages/prisma/package.json packages/drizzle/package.json; do
+            NAME=$(node -e "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).name)" "$pkg")
+            VERSION=$(node -e "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version)" "$pkg")
+            if ! npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+              echo "Unpublished version detected: ${NAME}@${VERSION}"
+              UNPUBLISHED=true
+            fi
+          done
+
+          echo "should_publish=$UNPUBLISHED" >> "$GITHUB_OUTPUT"
+          echo "snapshot=false" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: version
+    if: needs.version.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm check:packages
+
+      - name: Publish snapshot release via npm trusted publishing
+        if: needs.version.outputs.snapshot == 'true'
+        run: |
+          pnpm changeset version --snapshot snapshot
+          pnpm build
+          pnpm -r --filter '!@auditstream/test-utils' publish --tag snapshot --access public --no-git-checks
+
+      - name: Publish release via npm trusted publishing
+        if: needs.version.outputs.snapshot != 'true'
+        run: |
+          pnpm -r --filter '!@auditstream/test-utils' publish --access public --no-git-checks
