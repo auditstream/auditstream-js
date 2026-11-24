@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auditstream.dev/schemas/spec/0.1.0/event.schema.json",
+  "title": "Auditstream Exported Event Record",
+  "description": "Single exported audit event record defined by Auditstream Specification 0.1.0.",
+  "type": "object",
+  "required": ["event_id", "occurred_at", "source", "op", "db_user", "schema_version"],
+  "additionalProperties": true,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["db", "app"]
+    },
+    "schema_name": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "table_name": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "op": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "record_id": {
+      "type": ["object", "null"]
+    },
+    "before": {
+      "type": ["object", "null"]
+    },
+    "after": {
+      "type": ["object", "null"]
+    },
+    "changed": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "actor": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["type", "id"],
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tenant": {
+              "type": "string",
+              "minLength": 1
+            },
+            "onBehalfOf": {
+              "type": "object",
+              "required": ["type", "id"],
+              "additionalProperties": true,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tenant": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "onBehalfOf": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "context": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ip": {
+          "type": "string",
+          "minLength": 1
+        },
+        "userAgent": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "actor_source": {
+      "type": ["string", "null"],
+      "enum": ["set_config", "comment", "jwt", "invalid", null]
+    },
+    "db_user": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}
