@@ -9,6 +9,13 @@ on:
       - opened
       - synchronize
       - reopened
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/pull_request_template.md"
+      - ".github/labels.yml"
   workflow_dispatch:
 
 permissions:
