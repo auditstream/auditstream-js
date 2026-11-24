@@ -129,6 +129,17 @@ const textEncoder = new TextEncoder();
 // multi-chunk server bundles (for example Next.js Turbopack Route Handlers and Server
 // Actions sharing a globalThis Prisma client) always observe the same active actor scope.
 const SCOPE_STORAGE_SYMBOL: unique symbol = Symbol.for("auditstream.node.scopeStorage.v1") as never;
+const SCOPE_CACHE_SYMBOL: unique symbol = Symbol.for("auditstream.node.scopeCache.v1") as never;
+
+/**
+ * Internal cached canonical serialization and lazy encoded tag for an immutable `audit.as()` scope.
+ */
+export interface CachedScopePayload {
+  readonly json: string;
+  readonly bytes: Uint8Array;
+  encoded?: string;
+  commentSuffix?: string;
+}
 
 function getSharedScopeStorage(): AsyncLocalStorage<AuditScope> {
   const globalStore = globalThis as Record<PropertyKey, unknown>;
@@ -141,7 +152,27 @@ function getSharedScopeStorage(): AsyncLocalStorage<AuditScope> {
   return created;
 }
 
+function getSharedScopeCache(): WeakMap<AuditScope, CachedScopePayload> {
+  const globalStore = globalThis as Record<PropertyKey, unknown>;
+  const existing = globalStore[SCOPE_CACHE_SYMBOL];
+  if (existing instanceof WeakMap) {
+    return existing as WeakMap<AuditScope, CachedScopePayload>;
+  }
+  const created = new WeakMap<AuditScope, CachedScopePayload>();
+  globalStore[SCOPE_CACHE_SYMBOL] = created;
+  return created;
+}
+
 const scopeStorage = getSharedScopeStorage();
+const scopeCache = getSharedScopeCache();
+
+/**
+ * Internal lookup used by `transport.ts` to reuse canonical JSON, UTF-8 bytes, and encoded tags
+ * for deeply frozen scopes created by `audit.as()`.
+ */
+export function getCachedScopePayload(scope: AuditScope): CachedScopePayload | undefined {
+  return scopeCache.get(scope);
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -265,12 +296,12 @@ function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope
 
   const payload = context === undefined ? actor : { ...actor, context };
   const serialized = JSON.stringify(payload);
-  const byteLength = textEncoder.encode(serialized).byteLength;
+  const bytes = textEncoder.encode(serialized);
 
-  if (byteLength > MAX_PAYLOAD_BYTES) {
+  if (bytes.byteLength > MAX_PAYLOAD_BYTES) {
     throw new AuditstreamError(
       "PAYLOAD_TOO_LARGE",
-      `serialized actor payload is ${byteLength} UTF-8 bytes, exceeding the ${MAX_PAYLOAD_BYTES}-byte limit`,
+      `serialized actor payload is ${bytes.byteLength} UTF-8 bytes, exceeding the ${MAX_PAYLOAD_BYTES}-byte limit`,
     );
   }
 
@@ -278,7 +309,9 @@ function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope
   if (context !== undefined) {
     scope.context = context;
   }
-  return Object.freeze(scope);
+  const frozenScope: AuditScope = Object.freeze(scope);
+  scopeCache.set(frozenScope, { json: serialized, bytes });
+  return frozenScope;
 }
 
 /**

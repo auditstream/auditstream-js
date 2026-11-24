@@ -183,4 +183,162 @@ describe("@auditstream/node transport codec", () => {
       globalThis.Buffer = originalBuffer;
     }
   });
+
+  it("caches canonical payload and encoded tag per audit.as() scope via process-wide WeakMap", async () => {
+    const cacheSymbol = Symbol.for("auditstream.node.scopeCache.v1");
+    const scopeCache = (globalThis as Record<PropertyKey, unknown>)[cacheSymbol];
+    expect(scopeCache).toBeInstanceOf(WeakMap);
+
+    await audit.as(
+      {
+        type: "ai_agent",
+        id: "billing-agent",
+        onBehalfOf: { type: "user", id: "usr_42", tenant: "org_acme" },
+        tenant: "org_acme",
+      },
+      () => {
+        const active = audit.current();
+        expect(active).toBeDefined();
+        if (!active) {
+          throw new Error("expected active scope");
+        }
+
+        const cache = scopeCache as WeakMap<
+          AuditScope,
+          { json: string; encoded?: string; commentSuffix?: string }
+        >;
+        const entry = cache.get(active);
+        expect(entry).toBeDefined();
+        expect(entry?.json).toBe(setConfigValue(active));
+
+        const firstEncoded = encodeScope(active);
+        expect(entry?.encoded).toBe(firstEncoded);
+        expect(encodeScope(active)).toBe(firstEncoded);
+
+        const tagged = tagSql("UPDATE invoice SET status = $1", active);
+        expect(entry?.commentSuffix).toBe(` /*auditstream='${firstEncoded}'*/`);
+        expect(tagged).toBe(`UPDATE invoice SET status = $1 /*auditstream='${firstEncoded}'*/`);
+      },
+      { context: { requestId: "req_cache_1", source: "api" } },
+    );
+  });
+
+  it("property test (1,000 runs): cached audit.as() scopes match uncached encodeScope, setConfigValue, and tagSql byte-for-byte", async () => {
+    await fc.assert(
+      fc.asyncProperty(arbScope, async (scope) => {
+        const expectedEncoded = encodeScope(scope);
+        const expectedJson = setConfigValue(scope);
+        const expectedSql = tagSql("UPDATE invoice SET status = $1", scope);
+
+        await audit.as(
+          scope.actor,
+          () => {
+            const active = audit.current();
+            expect(active).toBeDefined();
+            if (!active) {
+              throw new Error("expected active scope");
+            }
+            expect(setConfigValue(active)).toBe(expectedJson);
+            expect(encodeScope(active)).toBe(expectedEncoded);
+            expect(encodeScope(active)).toBe(expectedEncoded);
+            expect(tagSql("UPDATE invoice SET status = $1")).toBe(expectedSql);
+            expect(tagSql("UPDATE invoice SET status = $1", active)).toBe(expectedSql);
+          },
+          scope.context !== undefined ? { context: scope.context } : undefined,
+        );
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it("never caches mutable caller-constructed scopes passed directly to encodeScope/setConfigValue/tagSql", () => {
+    const mutableActor: { type: ActorType; id: string } = { type: "user", id: "usr_before" };
+    const mutableContext: { requestId: string } = { requestId: "req_1" };
+    const mutableScope = { actor: mutableActor, context: mutableContext };
+
+    const encodedBefore = encodeScope(mutableScope);
+    const jsonBefore = setConfigValue(mutableScope);
+    const sqlBefore = tagSql("SELECT 1", mutableScope);
+
+    mutableActor.id = "usr_after";
+    mutableContext.requestId = "req_2";
+
+    const encodedAfter = encodeScope(mutableScope);
+    const jsonAfter = setConfigValue(mutableScope);
+    const sqlAfter = tagSql("SELECT 1", mutableScope);
+
+    expect(encodedAfter).not.toBe(encodedBefore);
+    expect(jsonAfter).not.toBe(jsonBefore);
+    expect(sqlAfter).not.toBe(sqlBefore);
+    expect(decodeScope(sqlAfter)).toEqual({
+      actor: { type: "user", id: "usr_after" },
+      context: { requestId: "req_2" },
+      actorSource: "comment",
+    });
+  });
+
+  it("isTagged and decodeScope handle comment edge cases, long SQL (>4096 chars), and Unicode trailing whitespace", () => {
+    const validTag = "eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0";
+
+    // Overlapping slash/star and empty comments MUST NOT match.
+    for (const edge of [
+      "",
+      "/*/",
+      "a/*/",
+      "/*a/*/",
+      "/**/",
+      "SELECT 1 /**/",
+      "SELECT 1 /*foo/auditstream='abc'*/",
+      "SELECT 1 /*foo_auditstream='abc'*/",
+      "SELECT 1 /*auditstream='unterminated*/",
+      "SELECT 1 /*traceparent='00-abc'*/",
+    ]) {
+      expect(isTagged(edge), `isTagged(${edge})`).toBe(false);
+      expect(decodeScope(edge), `decodeScope(${edge})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: null,
+      });
+    }
+
+    // Empty or malformed base64url payloads are tagged (won't double-tag) and decode as invalid.
+    for (const malformed of [
+      "SELECT 1 /*auditstream=''*/",
+      "SELECT 1 /*auditstream='a!'*/",
+      "SELECT 1 /*auditstream='ab!'*/",
+      "SELECT 1 /*auditstream='abcdé!'*/",
+      "SELECT 1 /*auditstream='abé'*/",
+    ]) {
+      expect(isTagged(malformed), `isTagged(${malformed})`).toBe(true);
+      expect(decodeScope(malformed), `decodeScope(${malformed})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: "invalid",
+      });
+    }
+
+    // Trailing Unicode whitespace (\u00A0) falls back cleanly to regex parity.
+    const unicodeTrailing = `UPDATE t SET v = 1 /*auditstream='${validTag}'*/\u00A0; `;
+    expect(isTagged(unicodeTrailing)).toBe(true);
+    expect(decodeScope(unicodeTrailing)).toEqual({
+      actor: { type: "user", id: "usr_42" },
+      context: null,
+      actorSource: "comment",
+    });
+
+    // Long SQL > 4096 chars: untagged vs tagged at end vs comment buried before the 4096-char tail.
+    const padding = " ".repeat(5000);
+    const longUntagged = `SELECT 1${padding}FROM invoice WHERE id = $1`;
+    expect(isTagged(longUntagged)).toBe(false);
+    expect(decodeScope(longUntagged).actorSource).toBeNull();
+
+    const longTagged = `${longUntagged} /*auditstream='${validTag}'*/;`;
+    expect(isTagged(longTagged)).toBe(true);
+    expect(decodeScope(longTagged).actor).toEqual({ type: "user", id: "usr_42" });
+
+    // Comment whose opening `/*` falls before the last 4096 chars is outside the tail window.
+    const oversizedComment = `SELECT 1 /*${"a".repeat(4100)},auditstream='${validTag}'*/`;
+    expect(isTagged(oversizedComment)).toBe(false);
+    expect(decodeScope(oversizedComment).actorSource).toBeNull();
+  });
 });
