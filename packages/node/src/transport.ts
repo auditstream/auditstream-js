@@ -147,6 +147,20 @@ function assertNonEmptyString(
   }
 }
 
+/**
+ * Locale-independent UTF-16 code-unit comparator matching `spec/transport.md` lexicographic
+ * key ordering without depending on the host's default locale.
+ */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  if (a > b) {
+    return 1;
+  }
+  return 0;
+}
+
 function canonicalizeNestedActor(raw: unknown): NestedActor {
   if (!isPlainObject(raw)) {
     throw new AuditstreamError("INVALID_ACTOR", "actor.onBehalfOf must be a JSON object");
@@ -178,7 +192,7 @@ function canonicalizeNestedActor(raw: unknown): NestedActor {
   }
 
   // Append any additional unknown keys in lexicographic order per spec/transport.md.
-  for (const key of Object.keys(raw).sort()) {
+  for (const key of Object.keys(raw).sort(compareCodeUnits)) {
     if (key === "type" || key === "id" || key === "tenant" || key === "onBehalfOf") {
       continue;
     }
@@ -215,7 +229,7 @@ function canonicalizeContext(raw: unknown): Record<string, unknown> {
     ordered.userAgent = raw.userAgent;
   }
 
-  for (const key of Object.keys(raw).sort()) {
+  for (const key of Object.keys(raw).sort(compareCodeUnits)) {
     if (key === "requestId" || key === "source" || key === "ip" || key === "userAgent") {
       continue;
     }
@@ -265,7 +279,7 @@ function serializeCanonicalPayload(scope: AuditScope): { json: string; bytes: Ui
     ordered.context = canonicalContext;
   }
 
-  for (const key of Object.keys(rawActor).sort()) {
+  for (const key of Object.keys(rawActor).sort(compareCodeUnits)) {
     if (
       key === "type" ||
       key === "id" ||
