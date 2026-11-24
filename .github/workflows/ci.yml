@@ -6,17 +6,80 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      readme: ${{ steps.filter.outputs.readme }}
+    steps:
+      - name: Detect changed file categories
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "readme=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! files=$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename'); then
+            echo "Failed to list PR files; defaulting to code=true."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "readme=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          count=$(printf '%s\n' "$files" | sed '/^$/d' | wc -l)
+          if [ "$count" -eq 0 ] || [ "$count" -ge 3000 ]; then
+            echo "PR file count ($count) outside fast-path bounds; defaulting to code=true."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "readme=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          code=false
+          readme=false
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              README.md|packages/*/README.md)
+                readme=true
+                ;;
+              docs/*|AGENTS.md|CONTRIBUTING.md|CODE_OF_CONDUCT.md|SECURITY.md|LICENSE|CHANGELOG.md|packages/*/CHANGELOG.md|.changeset/*.md|.github/ISSUE_TEMPLATE/*|.github/pull_request_template.md|.github/labels.yml)
+                ;;
+              *)
+                code=true
+                break
+                ;;
+            esac
+          done <<< "$files"
+
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "readme=$readme" >> "$GITHUB_OUTPUT"
+          echo "Detected code=$code readme=$readme across $count changed file(s)."
+
   checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.readme == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,8 +98,12 @@ jobs:
       - run: pnpm check:readme
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -61,8 +128,12 @@ jobs:
           fi
 
   integration:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -114,8 +185,12 @@ jobs:
           pnpm --filter @auditstream/prisma test:integration
 
   smoke-runtimes:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -135,8 +210,12 @@ jobs:
         run: deno run --allow-read --allow-env scripts/smoke-runtimes.mjs
 
   test-smoke:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -150,9 +229,13 @@ jobs:
       - run: pnpm exec turbo run test:smoke
 
   typescript-7:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,6 +255,7 @@ jobs:
   ci-ok:
     if: always()
     needs:
+      - changes
       - checks
       - test
       - integration
@@ -183,15 +267,37 @@ jobs:
       - name: Verify all blocking CI jobs succeeded
         env:
           RESULTS_JSON: ${{ toJSON(needs) }}
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
+          README_CHANGED: ${{ needs.changes.outputs.readme }}
         run: |
           node - <<'EOF'
           const needs = JSON.parse(process.env.RESULTS_JSON || "{}");
-          const failed = Object.entries(needs).filter(([, v]) => v.result !== "success");
+          const codeChanged = process.env.CODE_CHANGED === "true";
+          const readmeChanged = process.env.README_CHANGED === "true";
+          if (needs.changes?.result !== "success") {
+            console.error(`Blocking job 'changes' finished with result: ${needs.changes?.result}`);
+            process.exit(1);
+          }
+          const checksAllowed = codeChanged || readmeChanged
+            ? new Set(["success"])
+            : new Set(["success", "skipped"]);
+          const codeAllowed = codeChanged
+            ? new Set(["success"])
+            : new Set(["success", "skipped"]);
+
+          const failed = [];
+          for (const [name, info] of Object.entries(needs)) {
+            if (name === "changes") continue;
+            const allowed = name === "checks" ? checksAllowed : codeAllowed;
+            if (!allowed.has(info.result)) {
+              failed.push([name, info]);
+            }
+          }
           if (failed.length > 0) {
             for (const [name, info] of failed) {
               console.error(`Blocking job '${name}' finished with result: ${info.result}`);
             }
             process.exit(1);
           }
-          console.log(`All ${Object.keys(needs).length} blocking CI jobs succeeded.`);
+          console.log(`All ${Object.keys(needs).length} blocking CI jobs passed (code=${codeChanged}, readme=${readmeChanged}).`);
           EOF
