@@ -5,7 +5,27 @@
 ```ts
 
 // @public
+export interface PostgresJsLike extends PostgresJsTransactionLike {
+    begin: (...args: never[]) => unknown;
+}
+
+// @public
+export interface PostgresJsTransactionLike {
+    savepoint?: (...args: never[]) => unknown;
+    unsafe: (...args: never[]) => unknown;
+}
+
+// @public
+export interface PostgresJsUnsafeOptions {
+    [key: string]: unknown;
+    prepare?: boolean | undefined;
+}
+
+// @public
 export const SUBPATH: "@auditstream/drizzle/postgres-js";
+
+// @public
+export function wrapPostgresJs<TSql extends PostgresJsLike>(sql: TSql): TSql;
 
 // (No @packageDocumentation comment for this package)
 
