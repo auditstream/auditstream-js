@@ -1,5 +1,13 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
+  "globalDependencies": [
+    "tsconfig.base.json",
+    "vitest.config.ts",
+    "biome.json",
+    "conformance/**",
+    "conformance.json",
+    "scripts/**"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

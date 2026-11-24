@@ -22,6 +22,7 @@ concurrency:
 jobs:
   version:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       snapshot: ${{ steps.check.outputs.snapshot }}
@@ -124,6 +125,7 @@ jobs:
     needs: version
     if: needs.version.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: npm
     permissions:
       id-token: write
@@ -143,10 +145,8 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm check:packages
 
-      - name: Publish snapshot release via npm trusted publishing
+      - name: Prepare snapshot version
         if: needs.version.outputs.snapshot == 'true'
         env:
           HAS_CHANGESETS: ${{ needs.version.outputs.has_changesets }}
@@ -155,11 +155,14 @@ jobs:
             printf -- '---\n"@auditstream/node": patch\n---\n\nSnapshot release.\n' > .changeset/snapshot-release.md
           fi
           pnpm changeset version --snapshot snapshot
-          pnpm build
-          pnpm check:packages
-          pnpm -r --filter '!@auditstream/test-utils' publish --tag snapshot --access public --no-git-checks
+
+      - run: pnpm build
+      - run: pnpm check:packages
+
+      - name: Publish snapshot release via npm trusted publishing
+        if: needs.version.outputs.snapshot == 'true'
+        run: pnpm -r --filter '!@auditstream/test-utils' publish --tag snapshot --access public --no-git-checks
 
       - name: Publish release via npm trusted publishing
         if: needs.version.outputs.snapshot != 'true'
-        run: |
-          pnpm -r --filter '!@auditstream/test-utils' publish --access public --no-git-checks
+        run: pnpm -r --filter '!@auditstream/test-utils' publish --access public --no-git-checks

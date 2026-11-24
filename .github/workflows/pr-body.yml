@@ -12,9 +12,14 @@ on:
 permissions:
   pull-requests: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ai-disclosure:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Validate AI disclosure field
         env:
