@@ -40,7 +40,8 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config ../../vitest.config.ts"
+    "test": "vitest run --config ../../vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "peerDependencies": {
     "@auditstream/node": ">=0.1.0 <1.0.0",
@@ -48,8 +49,12 @@
   },
   "devDependencies": {
     "@auditstream/node": "workspace:*",
+    "@auditstream/test-utils": "workspace:*",
+    "@neondatabase/serverless": "catalog:",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
     "drizzle-orm": "catalog:",
+    "pg": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
