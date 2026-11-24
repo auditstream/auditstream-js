@@ -5,7 +5,49 @@
 ```ts
 
 // @public
-export const SUBPATH: "@auditstream/node/next";
+export interface Actor {
+    readonly id: string;
+    readonly onBehalfOf?: NestedActor;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
+
+// @public
+export type ActorType = "user" | "api_key" | "ai_agent" | "service" | "system";
+
+// @public
+export function auditAction<TArgs extends readonly unknown[], TResult>(action: (...args: TArgs) => TResult | PromiseLike<TResult>, options: NextActionAuditOptions<TArgs>): (...args: TArgs) => Promise<Awaited<TResult>>;
+
+// @public
+export interface AuditContext {
+    readonly ip?: string;
+    readonly requestId?: string;
+    readonly source?: string;
+    readonly userAgent?: string;
+}
+
+// @public
+export interface NestedActor {
+    readonly id: string;
+    readonly onBehalfOf?: never;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
+
+// @public
+export interface NextActionAuditOptions<TArgs extends readonly unknown[] = readonly unknown[]> {
+    readonly actor: (...args: TArgs) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (...args: TArgs) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+}
+
+// @public
+export interface NextAuditOptions<TRequest extends Request = Request> {
+    readonly actor: (request: TRequest) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (request: TRequest) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+}
+
+// @public
+export function withAudit<TRequest extends Request = Request, TArgs extends readonly unknown[] = [], TResult = Response>(handler: (request: TRequest, ...args: TArgs) => TResult | PromiseLike<TResult>, options: NextAuditOptions<TRequest>): (request: TRequest, ...args: TArgs) => Promise<Awaited<TResult>>;
 
 // (No @packageDocumentation comment for this package)
 

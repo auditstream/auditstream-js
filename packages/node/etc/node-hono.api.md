@@ -4,8 +4,44 @@
 
 ```ts
 
+import { Context } from 'hono';
+import { MiddlewareHandler } from 'hono';
+
 // @public
-export const SUBPATH: "@auditstream/node/hono";
+export interface Actor {
+    readonly id: string;
+    readonly onBehalfOf?: NestedActor;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
+
+// @public
+export type ActorType = "user" | "api_key" | "ai_agent" | "service" | "system";
+
+// @public
+export interface AuditContext {
+    readonly ip?: string;
+    readonly requestId?: string;
+    readonly source?: string;
+    readonly userAgent?: string;
+}
+
+// @public
+export function auditstream(options: HonoAuditOptions): MiddlewareHandler;
+
+// @public
+export interface HonoAuditOptions {
+    readonly actor: (c: Context) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (c: Context) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+}
+
+// @public
+export interface NestedActor {
+    readonly id: string;
+    readonly onBehalfOf?: never;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
 
 // (No @packageDocumentation comment for this package)
 
