@@ -16,7 +16,7 @@ pnpm changeset
 
 Agents never run npmjs.com setup, change GitHub settings/secrets, or publish packages. A maintainer performs these steps once:
 
-1. **GitHub App for version pull requests:** create the release GitHub App (Contents + Pull requests read/write), **install it** on `auditstream/auditstream-js` (App settings → **Install App** → **Only select repositories** → `auditstream/auditstream-js`), and add `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` as repository secrets. (Pull requests opened with the default `GITHUB_TOKEN` do not trigger CI.)
+1. **GitHub App for version pull requests:** create the release GitHub App (Contents + Pull requests read/write), **install it** on `auditstream/auditstream-js` (App settings → **Install App** → **Only select repositories** → `auditstream/auditstream-js`), and add `RELEASE_APP_CLIENT_ID` (the App's **Client ID**, e.g. `Iv23li...`, not the numeric App ID) and `RELEASE_APP_PRIVATE_KEY` as repository secrets. (Pull requests opened with the default `GITHUB_TOKEN` do not trigger CI.)
 2. **GitHub `npm` environment:** create an environment named `npm` in `auditstream/auditstream-js` settings:
    - While the repository is **private** on GitHub Free/Team, GitHub restricts environment protection rules (`reviewers` and `deployment_branch_policy`) to Enterprise; create the plain `npm` environment (`gh api --method PUT repos/auditstream/auditstream-js/environments/npm`) so OIDC trusted publishing can use `environment: npm`.
    - As soon as the repository goes **public**, enable required approval from **both maintainers** and restrict deployment branches to **`main` only**.

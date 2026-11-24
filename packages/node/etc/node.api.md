@@ -5,6 +5,65 @@
 ```ts
 
 // @public
+export interface Actor {
+    readonly id: string;
+    readonly onBehalfOf?: NestedActor;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
+
+// @public
+export type ActorType = "user" | "api_key" | "ai_agent" | "service" | "system";
+
+// @public
+export const audit: AuditNamespace;
+
+// @public
+export interface AuditAsOptions {
+    readonly context?: AuditContext;
+}
+
+// @public
+export interface AuditContext {
+    readonly ip?: string;
+    readonly requestId?: string;
+    readonly source?: string;
+    readonly userAgent?: string;
+}
+
+// @public
+export interface AuditNamespace {
+    as<T>(actor: Actor, fn: () => T | PromiseLike<T>, options?: AuditAsOptions): Promise<Awaited<T>>;
+    current(): AuditScope | undefined;
+}
+
+// @public
+export interface AuditScope {
+    readonly actor: Actor;
+    readonly context?: AuditContext;
+}
+
+// @public
+export class AuditstreamError extends Error {
+    constructor(code: AuditstreamErrorCode, message: string);
+    readonly code: AuditstreamErrorCode;
+}
+
+// @public
+export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE";
+
+// @public
+export const MAX_PAYLOAD_BYTES: 512;
+
+// @public
+export interface NestedActor {
+    readonly id: string;
+    readonly onBehalfOf?: never;
+    readonly tenant?: string;
+    readonly type: ActorType;
+}
+
+// @public
 export const PACKAGE_NAME: "@auditstream/node";
 
 // (No @packageDocumentation comment for this package)
