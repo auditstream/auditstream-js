@@ -1,0 +1,27 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../../../integration/generated/prisma-engine"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Invoice {
+  id           Int        @id
+  status       String?
+  total        Decimal?   @db.Decimal
+  passwordHash String?    @map("password_hash")
+  lineItems    LineItem[]
+
+  @@map("invoice")
+}
+
+model LineItem {
+  id        Int      @id
+  invoiceId Int?     @map("invoice_id")
+  qty       Int?
+  invoice   Invoice? @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("line_item")
+}
