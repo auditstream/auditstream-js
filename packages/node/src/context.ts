@@ -87,7 +87,9 @@ export type AuditstreamErrorCode =
   | "INVALID_ACTOR"
   | "INVALID_CONTEXT"
   | "PAYLOAD_TOO_LARGE"
-  | "INVALID_EVENT";
+  | "INVALID_EVENT"
+  | "INVALID_RECORD"
+  | "INVALID_QUERY";
 
 /**
  * Error thrown by Auditstream when an actor or context payload violates Specification 0.1.0.

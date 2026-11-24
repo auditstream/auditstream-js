@@ -11,6 +11,25 @@ import {
   type NestedActor,
 } from "./context.js";
 import {
+  type AuditHistoryExecutor,
+  type AuditHistoryQuery,
+  type AuditHistoryQueryResult,
+  type AuditHistoryValues,
+  type AuditOp,
+  type DbOp,
+  DEFAULT_HISTORY_LIMIT,
+  type EventSourceKind,
+  type ExportRecord,
+  type HistoryEntry,
+  type JsonObject,
+  type JsonPrimitive,
+  type JsonValue,
+  MAX_HISTORY_LIMIT,
+  parseExportRecord,
+  readHistory,
+  SUPPORTED_SCHEMA_VERSION,
+} from "./history.js";
+import {
   type AuditLogEvent,
   type AuditLogExecutor,
   type AuditLogValues,
@@ -23,8 +42,8 @@ import {
 export const PACKAGE_NAME: "@auditstream/node" = "@auditstream/node";
 
 /**
- * Public `audit` namespace owning actor context propagation (`audit.as()`, `audit.current()`)
- * and application event logging (`audit.log()`).
+ * Public `audit` namespace owning actor context propagation (`audit.as()`, `audit.current()`),
+ * application event logging (`audit.log()`), and typed record history lookups (`audit.history()`).
  */
 export interface AuditNamespace {
   /**
@@ -47,15 +66,23 @@ export interface AuditNamespace {
    * caller's active `audit.as()` scope, propagates errors from `exec` unchanged, and resolves to `undefined`.
    */
   log(exec: AuditLogExecutor, event: AuditLogEvent): Promise<void>;
+
+  /**
+   * Reads recorded audit history for a single record from `{schema}.changes`, ordered newest first
+   * (`occurred_at DESC, id DESC`), using the caller's database connection (`exec`).
+   */
+  history(exec: AuditHistoryExecutor, query: AuditHistoryQuery): Promise<HistoryEntry[]>;
 }
 
 /**
- * Shared Auditstream runtime entry point providing `audit.as()`, `audit.current()`, and `audit.log()`.
+ * Shared Auditstream runtime entry point providing `audit.as()`, `audit.current()`,
+ * `audit.log()`, and `audit.history()`.
  */
 export const audit: AuditNamespace = Object.freeze({
   as: contextAudit.as,
   current: contextAudit.current,
   log: logEvent,
+  history: readHistory,
 });
 
 export {
@@ -73,14 +100,30 @@ export {
   type ActorType,
   type AuditAsOptions,
   type AuditContext,
+  type AuditHistoryExecutor,
+  type AuditHistoryQuery,
+  type AuditHistoryQueryResult,
+  type AuditHistoryValues,
   type AuditLogEvent,
   type AuditLogExecutor,
   type AuditLogValues,
+  type AuditOp,
   type AuditScope,
   AuditstreamError,
   type AuditstreamErrorCode,
+  type DbOp,
+  DEFAULT_HISTORY_LIMIT,
+  type EventSourceKind,
+  type ExportRecord,
+  type HistoryEntry,
+  type JsonObject,
+  type JsonPrimitive,
+  type JsonValue,
   LOG_EVENT_SQL,
   MAX_ACTION_LENGTH,
+  MAX_HISTORY_LIMIT,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
+  parseExportRecord,
+  SUPPORTED_SCHEMA_VERSION,
 };

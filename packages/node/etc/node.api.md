@@ -35,6 +35,25 @@ export interface AuditContext {
 }
 
 // @public
+export type AuditHistoryExecutor = (text: string, values: AuditHistoryValues) => AuditHistoryQueryResult | PromiseLike<AuditHistoryQueryResult>;
+
+// @public
+export interface AuditHistoryQuery {
+    readonly limit?: number | undefined;
+    readonly recordId: JsonObject;
+    readonly schema?: string | undefined;
+    readonly table: string;
+}
+
+// @public
+export type AuditHistoryQueryResult = readonly Record<string, unknown>[] | {
+    readonly rows: readonly Record<string, unknown>[];
+};
+
+// @public
+export type AuditHistoryValues = [table: string, recordIdJson: string, limit: number];
+
+// @public
 export interface AuditLogEvent {
     readonly action: string;
     readonly data?: Record<string, unknown> | null | undefined;
@@ -51,8 +70,12 @@ export type AuditLogValues = [action: string, target: string | null, data: strin
 export interface AuditNamespace {
     as<T>(actor: Actor, fn: () => T | PromiseLike<T>, options?: AuditAsOptions): Promise<Awaited<T>>;
     current(): AuditScope | undefined;
+    history(exec: AuditHistoryExecutor, query: AuditHistoryQuery): Promise<HistoryEntry[]>;
     log(exec: AuditLogExecutor, event: AuditLogEvent): Promise<void>;
 }
+
+// @public
+export type AuditOp = DbOp | (string & {});
 
 // @public
 export interface AuditScope {
@@ -67,7 +90,10 @@ export class AuditstreamError extends Error {
 }
 
 // @public
-export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE" | "INVALID_EVENT";
+export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE" | "INVALID_EVENT" | "INVALID_RECORD" | "INVALID_QUERY";
+
+// @public
+export type DbOp = "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE";
 
 // @public
 export interface DecodedTransport {
@@ -80,10 +106,70 @@ export interface DecodedTransport {
 export function decodeScope(sql: string): DecodedTransport;
 
 // @public
+export const DEFAULT_HISTORY_LIMIT: 50;
+
+// @public
 export function encodeScope(scope: AuditScope): string;
 
 // @public
+export type EventSourceKind = "db" | "app";
+
+// @public
+export interface ExportRecord {
+    readonly actor: Actor | null;
+    readonly actor_source: ActorSource | null;
+    readonly after: JsonObject | null;
+    readonly before: JsonObject | null;
+    readonly changed: readonly string[] | null;
+    readonly context: AuditContext | null;
+    readonly db_user: string;
+    readonly event_id: string;
+    readonly occurred_at: string;
+    readonly op: AuditOp;
+    readonly record_id: JsonObject | null;
+    readonly schema_name: string | null;
+    readonly schema_version: number;
+    readonly source: EventSourceKind;
+    readonly table_name: string | null;
+}
+
+// @public
+export interface HistoryEntry {
+    readonly actor: Actor | null;
+    readonly actor_source: ActorSource | null;
+    readonly after: JsonObject | null;
+    readonly before: JsonObject | null;
+    readonly changed: readonly string[] | null;
+    readonly context: AuditContext | null;
+    readonly db_user: string;
+    readonly event_id: string;
+    readonly id: string;
+    readonly occurred_at: string;
+    readonly op: AuditOp;
+    readonly record_id: JsonObject | null;
+    readonly schema_name: string | null;
+    readonly schema_version: number;
+    readonly source: EventSourceKind;
+    readonly table_name: string | null;
+    readonly table_oid: number | null;
+    readonly xact_id: string;
+}
+
+// @public
 export function isTagged(sql: string): boolean;
+
+// @public
+export type JsonObject = {
+    readonly [key: string]: JsonValue;
+};
+
+// @public
+export type JsonPrimitive = string | number | boolean | null;
+
+// @public
+export type JsonValue = JsonPrimitive | readonly JsonValue[] | {
+    readonly [key: string]: JsonValue;
+};
 
 // @public
 export const LOG_EVENT_SQL: "SELECT auditstream.log_event($1::text, $2::jsonb, $3::jsonb)";
@@ -93,6 +179,9 @@ export const MAX_ACTION_LENGTH: 64;
 
 // @public
 export const MAX_ENCODED_COMMENT_CHARS: 683;
+
+// @public
+export const MAX_HISTORY_LIMIT: 1000;
 
 // @public
 export const MAX_PAYLOAD_BYTES: 512;
@@ -109,7 +198,13 @@ export interface NestedActor {
 export const PACKAGE_NAME: "@auditstream/node";
 
 // @public
+export function parseExportRecord(line: string): ExportRecord;
+
+// @public
 export function setConfigValue(scope: AuditScope): string;
+
+// @public
+export const SUPPORTED_SCHEMA_VERSION: 1;
 
 // @public
 export function tagSql(sql: string, scope?: AuditScope | undefined): string;
