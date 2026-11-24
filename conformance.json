@@ -1,9 +1,9 @@
 {
-  "specVersion": "0.1.0",
+  "specVersion": "0.1.1",
   "repository": "auditstream/auditstream",
-  "tag": "spec-v0.1.0",
-  "asset": "auditstream-spec-0.1.0.tar.gz",
-  "tarballSha256": "7fcb9eb4f21b7ac14386fb6917abab3a3d9777708f3652150fab6f461c7fa654",
+  "tag": "spec-v0.1.1",
+  "asset": "auditstream-spec-0.1.1.tar.gz",
+  "tarballSha256": "ac50603bab17a0f3ecd80c7149b6550b20da38b9b2652350f38ec8432ea68860",
   "files": {
     "README.md": "30413d86422f6af9b75ec3eebbe05382fbfa7382c72a9f04f0a37e5677198a07",
     "capture/edge-tables.json": "5aab3a6c458951d0be80aadc3cc05d0a5940d486cd72e73c5b9fd136f31567fb",
