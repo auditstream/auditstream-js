@@ -1,0 +1,45 @@
+{
+  "name": "@auditstream/prisma",
+  "version": "0.1.0",
+  "description": "Prisma 7 SQL comments plugin and set_config fallback for Auditstream",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/auditstream/auditstream-js.git",
+    "directory": "packages/prisma"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts"
+  },
+  "peerDependencies": {
+    "@auditstream/node": "workspace:*",
+    "@prisma/client": ">=7.1.0 <8"
+  },
+  "devDependencies": {
+    "@auditstream/node": "workspace:*",
+    "@prisma/client": "catalog:",
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
