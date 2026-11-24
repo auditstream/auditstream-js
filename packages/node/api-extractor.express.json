@@ -1,0 +1,8 @@
+{
+  "extends": "../../api-extractor.base.json",
+  "projectFolder": ".",
+  "mainEntryPointFilePath": "<projectFolder>/dist/express.d.mts",
+  "apiReport": {
+    "reportFileName": "node-express.api.md"
+  }
+}

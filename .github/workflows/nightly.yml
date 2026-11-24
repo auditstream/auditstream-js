@@ -1,0 +1,47 @@
+name: Nightly ORM compatibility
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  orm-matrix:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - orm: prisma
+            filter: "@auditstream/prisma"
+            package: "@prisma/client"
+            tag: latest
+          - orm: prisma
+            filter: "@auditstream/prisma"
+            package: "@prisma/client"
+            tag: rc
+          - orm: drizzle
+            filter: "@auditstream/drizzle"
+            package: "drizzle-orm"
+            tag: latest
+          - orm: drizzle
+            filter: "@auditstream/drizzle"
+            package: "drizzle-orm"
+            tag: rc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install ${{ matrix.package }}@${{ matrix.tag }}
+        run: pnpm --filter "${{ matrix.filter }}" add -D "${{ matrix.package }}@${{ matrix.tag }}" --no-frozen-lockfile
+      - run: pnpm build
+      - name: Run ${{ matrix.orm }} integration suite (if present)
+        run: pnpm --filter "${{ matrix.filter }}" --if-present run test:integration

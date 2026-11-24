@@ -1,0 +1,8 @@
+{
+  "extends": "../../api-extractor.base.json",
+  "projectFolder": ".",
+  "mainEntryPointFilePath": "<projectFolder>/dist/hono.d.mts",
+  "apiReport": {
+    "reportFileName": "node-hono.api.md"
+  }
+}
