@@ -1,0 +1,255 @@
+{
+  "spec": "0.1.0",
+  "kind": "transport_decode",
+  "cases": [
+    {
+      "name": "minimal-user-comment",
+      "description": "Minimal trailing auditstream comment on an UPDATE statement.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'paid' WHERE id = 1 /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usr_42"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "shared-sqlcommenter-auditstream-first",
+      "description": "auditstream key shared with traceparent (auditstream first) and trailing semicolon.",
+      "input": {
+        "sql": "INSERT INTO invoice VALUES (1,'open',100,'s1') /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0',traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/;"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usr_42"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "shared-sqlcommenter-auditstream-second",
+      "description": "auditstream key shared with traceparent (auditstream second).",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'paid' WHERE id = 1 /*traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifSwidGVuYW50Ijoib3JnX2FjbWUifQ'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "ai_agent",
+          "id": "billing-agent",
+          "onBehalfOf": {
+            "type": "user",
+            "id": "usr_42"
+          },
+          "tenant": "org_acme"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "actor-with-context-split",
+      "description": "Context object inside the actor payload is split into top-level actor and context.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'exported' WHERE id = 1 /*auditstream='eyJ0eXBlIjoic2VydmljZSIsImlkIjoiZXhwb3J0LXdvcmtlciIsInRlbmFudCI6Im9yZ19hY21lIiwiY29udGV4dCI6eyJyZXF1ZXN0SWQiOiJyZXFfMDEiLCJzb3VyY2UiOiJ3b3JrZXIifX0'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "service",
+          "id": "export-worker",
+          "tenant": "org_acme"
+        },
+        "context": {
+          "requestId": "req_01",
+          "source": "worker"
+        },
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "non-ascii-utf8-decoded",
+      "description": "Foreign UTF-8 characters decode intact.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXN1w6FyaW8t5pel5pys6KqeIn0'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usuário-日本語"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "non-canonical-json-accepted",
+      "description": "Decoders MUST accept valid JSON with non-canonical key order and whitespace.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyAiaWQiIDogInVzcl85OSIgLCAidHlwZSIgOiAidXNlciIgfQ'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usr_99"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "exact-512-utf8-bytes-valid",
+      "description": "512-byte UTF-8 JSON (683 unpadded base64url chars) decodes successfully.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoiw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6lhIn0'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééa"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "second-comment-before-ours",
+      "description": "An earlier SQL comment before the trailing auditstream comment does not block decoding.",
+      "input": {
+        "sql": "UPDATE /* hint */ invoice SET status = 'ok' /*other='1'*/ /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;  \n"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "usr_42"
+        },
+        "context": null,
+        "actor_source": "comment"
+      }
+    },
+    {
+      "name": "text-after-comment-ignored",
+      "description": "A comment followed by SQL tokens (not only whitespace/semicolons) is ignored.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/ WHERE id = 1"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": null
+      }
+    },
+    {
+      "name": "spoof-inside-string-literal",
+      "description": "Comment-looking text inside a SQL string literal is not a trailing comment and is ignored.",
+      "input": {
+        "sql": "UPDATE invoice SET status='/*auditstream=''eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkifQ''*/' WHERE id=3;"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": null
+      }
+    },
+    {
+      "name": "other-sqlcommenter-without-auditstream",
+      "description": "Trailing sqlcommenter block with no auditstream key yields null actor and null actor_source.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": null
+      }
+    },
+    {
+      "name": "reject-padded-base64url",
+      "description": "Base64url value containing '=' padding is rejected as invalid.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0='*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-non-base64-chars",
+      "description": "Characters outside [A-Za-z0-9_-] yield actor_source='invalid' (per spec/transport.md, not null).",
+      "input": {
+        "sql": "UPDATE invoice SET total=56 WHERE id=2 /*auditstream='!!!notbase64'*/;"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-non-json-payload",
+      "description": "Valid base64url decoding to non-JSON text ('not json') yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET total=57 WHERE id=2 /*auditstream='bm90IGpzb24'*/;"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-513-utf8-bytes",
+      "description": "Payload over 512 UTF-8 bytes (684 base64url chars) yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoiw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6lhYiJ9'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-missing-id-field",
+      "description": "JSON object missing required 'id' yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciJ9'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-non-object-json",
+      "description": "Valid JSON array (not an object) yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='WyJ1c2VyIiwidXNyXzQyIl0'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-invalid-utf8-bytes",
+      "description": "Base64url decoding to invalid UTF-8 bytes yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='__79'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    }
+  ]
+}

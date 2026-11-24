@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auditstream.dev/schemas/spec/0.1.0/fixture.schema.json",
+  "title": "Auditstream Conformance Fixture File",
+  "description": "Validates every Auditstream 0.1.0 conformance fixture file under spec/conformance/.",
+  "type": "object",
+  "required": ["spec", "kind", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "spec": {
+      "type": "string",
+      "const": "0.1.0"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "transport_encode",
+        "transport_decode",
+        "transport_precedence",
+        "capture"
+      ]
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "transport_encode" },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/encodeCase" }
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "transport_decode" },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/decodeCase" }
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "transport_precedence" },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/precedenceCase" }
+        }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "capture" },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/captureCase" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "caseName": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "actorSource": {
+      "type": ["string", "null"],
+      "enum": ["set_config", "comment", "jwt", "invalid", null]
+    },
+    "nullableObject": {
+      "type": ["object", "null"]
+    },
+    "encodeCase": {
+      "type": "object",
+      "required": ["name", "description", "input", "expected"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "description": { "type": "string", "minLength": 1 },
+        "input": {
+          "type": "object",
+          "required": ["actor"],
+          "additionalProperties": false,
+          "properties": {
+            "actor": { "type": "object" }
+          }
+        },
+        "expected": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["canonical_json", "encoded", "comment"],
+              "additionalProperties": false,
+              "properties": {
+                "canonical_json": { "type": "string", "minLength": 1 },
+                "encoded": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 683,
+                  "pattern": "^[A-Za-z0-9_-]+$"
+                },
+                "comment": {
+                  "type": "string",
+                  "pattern": "^/\\*auditstream='[A-Za-z0-9_-]+'\\*/$"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["error"],
+              "additionalProperties": false,
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "enum": ["invalid_actor", "invalid_context", "payload_too_large"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "decodeCase": {
+      "type": "object",
+      "required": ["name", "description", "input", "expected"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "description": { "type": "string", "minLength": 1 },
+        "input": {
+          "type": "object",
+          "required": ["sql"],
+          "additionalProperties": false,
+          "properties": {
+            "sql": { "type": "string", "minLength": 1 }
+          }
+        },
+        "expected": {
+          "type": "object",
+          "required": ["actor", "context", "actor_source"],
+          "additionalProperties": false,
+          "properties": {
+            "actor": { "$ref": "#/$defs/nullableObject" },
+            "context": { "$ref": "#/$defs/nullableObject" },
+            "actor_source": { "$ref": "#/$defs/actorSource" }
+          }
+        }
+      }
+    },
+    "precedenceCase": {
+      "type": "object",
+      "required": ["name", "description", "input", "expected"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "description": { "type": "string", "minLength": 1 },
+        "input": {
+          "type": "object",
+          "required": ["sql"],
+          "additionalProperties": false,
+          "properties": {
+            "sql": { "type": "string", "minLength": 1 },
+            "set_config": { "type": ["string", "null"] },
+            "jwt_claims": { "type": ["string", "null"] }
+          }
+        },
+        "expected": {
+          "type": "object",
+          "required": ["actor", "context", "actor_source"],
+          "additionalProperties": false,
+          "properties": {
+            "actor": { "$ref": "#/$defs/nullableObject" },
+            "context": { "$ref": "#/$defs/nullableObject" },
+            "actor_source": { "$ref": "#/$defs/actorSource" }
+          }
+        }
+      }
+    },
+    "captureStep": {
+      "type": "object",
+      "required": ["sql", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "sql": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "enum": ["app", "admin"] },
+        "actor_comment": { "type": ["string", "null"] },
+        "set_config": { "type": ["string", "null"] },
+        "jwt_claims": { "type": ["string", "null"] }
+      }
+    },
+    "expectedCaptureRow": {
+      "type": "object",
+      "required": [
+        "table_name",
+        "op",
+        "record_id",
+        "changed",
+        "actor",
+        "actor_source",
+        "before_keys",
+        "after_keys"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "table_name": { "type": "string", "minLength": 1 },
+        "op": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "record_id": { "$ref": "#/$defs/nullableObject" },
+        "changed": {
+          "type": ["array", "null"],
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "actor": { "$ref": "#/$defs/nullableObject" },
+        "actor_source": { "$ref": "#/$defs/actorSource" },
+        "before_keys": {
+          "type": ["array", "null"],
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "after_keys": {
+          "type": ["array", "null"],
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "expectedStepError": {
+      "type": "object",
+      "required": ["step_index", "sqlstate"],
+      "additionalProperties": false,
+      "properties": {
+        "step_index": { "type": "integer", "minimum": 0 },
+        "sqlstate": { "type": "string", "pattern": "^[0-9A-Z]{5}$" }
+      }
+    },
+    "captureCase": {
+      "type": "object",
+      "required": ["name", "description", "input", "expected"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/caseName" },
+        "description": { "type": "string", "minLength": 1 },
+        "input": {
+          "type": "object",
+          "required": ["schema_sql", "excluded_columns", "steps"],
+          "additionalProperties": false,
+          "properties": {
+            "schema_sql": { "type": "string", "minLength": 1 },
+            "excluded_columns": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              }
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/captureStep" }
+            }
+          }
+        },
+        "expected": {
+          "type": "object",
+          "required": ["rows"],
+          "additionalProperties": false,
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/expectedCaptureRow" }
+            },
+            "step_errors": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/expectedStepError" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

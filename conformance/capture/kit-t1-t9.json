@@ -1,0 +1,812 @@
+{
+  "spec": "0.1.0",
+  "kind": "capture",
+  "cases": [
+    {
+      "name": "t1-multi-row-insert-and-sqlcommenter",
+      "description": "T1: Multi-row INSERT with auditstream sharing sqlcommenter keys with traceparent; excluded password_hash omitted.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ],
+          "line_item": []
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (1,'open',100,'s1'),(2,'open',50,'s2'),(3,'open',10,'s3') /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0',traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0',traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/"
+          },
+          {
+            "sql": "INSERT INTO line_item VALUES (10,1,1),(11,1,2) /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 1
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 2
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 3
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "line_item",
+            "op": "INSERT",
+            "record_id": {
+              "id": 10
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "invoice_id",
+              "qty"
+            ]
+          },
+          {
+            "table_name": "line_item",
+            "op": "INSERT",
+            "record_id": {
+              "id": 11
+            },
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "invoice_id",
+              "qty"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "t2-set-config-wins-over-comment",
+      "description": "T2: Transaction-local set_config takes precedence over a trailing comment.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ]
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (1,'open',100,'s1');",
+            "role": "admin"
+          },
+          {
+            "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkifQ'*/;",
+            "role": "app",
+            "set_config": "{\"type\":\"system\",\"id\":\"nightly-job\"}",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkifQ'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 1
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 1
+            },
+            "changed": [
+              "status"
+            ],
+            "actor": {
+              "type": "system",
+              "id": "nightly-job"
+            },
+            "actor_source": "set_config",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "t3-jwt-sub-fallback",
+      "description": "T3: request.jwt.claims sub fallback resolves to user actor when set_config and comment are absent.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ]
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (2,'open',50,'s2');",
+            "role": "admin"
+          },
+          {
+            "sql": "UPDATE invoice SET total=55 WHERE id=2;",
+            "role": "app",
+            "jwt_claims": "{\"sub\":\"auth0|abc\",\"role\":\"authenticated\"}"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 2
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 2
+            },
+            "changed": [
+              "total"
+            ],
+            "actor": {
+              "type": "user",
+              "id": "auth0|abc"
+            },
+            "actor_source": "jwt",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "t4-spoof-in-string-literal-ignored",
+      "description": "T4: Comment-looking text inside SQL string literals is ignored and yields null actor.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ]
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (3,'open',10,'s3');",
+            "role": "admin"
+          },
+          {
+            "sql": "UPDATE invoice SET status='/*auditstream=''eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkifQ''*/' WHERE id=3;",
+            "role": "app"
+          },
+          {
+            "sql": "UPDATE invoice SET status='x' WHERE status='/*auditstream=''eyJ0eXBlIjoiYXBpX2tleSIsImlkIjoia2V5XzkifQ''*/';",
+            "role": "app"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 3
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 3
+            },
+            "changed": [
+              "status"
+            ],
+            "actor": null,
+            "actor_source": null,
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 3
+            },
+            "changed": [
+              "status"
+            ],
+            "actor": null,
+            "actor_source": null,
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "t5-malformed-payloads-never-break-writes",
+      "description": "T5: Malformed base64url and non-JSON payloads never abort the write; both record actor_source='invalid' per spec/transport.md.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ]
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (2,'open',55,'s2');",
+            "role": "admin"
+          },
+          {
+            "sql": "UPDATE invoice SET total=56 WHERE id=2 /*auditstream='!!!notbase64'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='!!!notbase64'*/"
+          },
+          {
+            "sql": "UPDATE invoice SET total=57 WHERE id=2 /*auditstream='bm90IGpzb24'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='bm90IGpzb24'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 2
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 2
+            },
+            "changed": [
+              "total"
+            ],
+            "actor": null,
+            "actor_source": "invalid",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 2
+            },
+            "changed": [
+              "total"
+            ],
+            "actor": null,
+            "actor_source": "invalid",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "t6-ai-agent-bulk-update-and-cascade-delete",
+      "description": "T6: ai_agent acting on behalf of usr_42 across a bulk UPDATE and a parent DELETE that cascades to child line_item rows.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ],
+          "line_item": []
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (1,'paid',100,'s1'),(2,'open',57,'s2'),(3,'x',10,'s3');",
+            "role": "admin"
+          },
+          {
+            "sql": "INSERT INTO line_item VALUES (10,1,1),(11,1,2);",
+            "role": "admin"
+          },
+          {
+            "sql": "UPDATE invoice SET status='void' WHERE id IN (2,3) /*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifX0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifX0'*/"
+          },
+          {
+            "sql": "DELETE FROM invoice WHERE id=1 /*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifX0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImJpbGxpbmctYWdlbnQiLCJvbkJlaGFsZk9mIjp7InR5cGUiOiJ1c2VyIiwiaWQiOiJ1c3JfNDIifX0'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 1
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 2
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 3
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "line_item",
+            "op": "INSERT",
+            "record_id": {
+              "id": 10
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "invoice_id",
+              "qty"
+            ]
+          },
+          {
+            "table_name": "line_item",
+            "op": "INSERT",
+            "record_id": {
+              "id": 11
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "invoice_id",
+              "qty"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 2
+            },
+            "changed": [
+              "status"
+            ],
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "UPDATE",
+            "record_id": {
+              "id": 3
+            },
+            "changed": [
+              "status"
+            ],
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          },
+          {
+            "table_name": "invoice",
+            "op": "DELETE",
+            "record_id": {
+              "id": 1
+            },
+            "changed": null,
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "id",
+              "status",
+              "total"
+            ],
+            "after_keys": null
+          },
+          {
+            "table_name": "line_item",
+            "op": "DELETE",
+            "record_id": {
+              "id": 10
+            },
+            "changed": null,
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "id",
+              "invoice_id",
+              "qty"
+            ],
+            "after_keys": null
+          },
+          {
+            "table_name": "line_item",
+            "op": "DELETE",
+            "record_id": {
+              "id": 11
+            },
+            "changed": null,
+            "actor": {
+              "type": "ai_agent",
+              "id": "billing-agent",
+              "onBehalfOf": {
+                "type": "user",
+                "id": "usr_42"
+              }
+            },
+            "actor_source": "comment",
+            "before_keys": [
+              "id",
+              "invoice_id",
+              "qty"
+            ],
+            "after_keys": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "t7-noop-and-excluded-column-updates-write-nothing",
+      "description": "T7: A no-op UPDATE and an UPDATE touching only an excluded column produce zero additional history rows.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "invoice": [
+            "password_hash"
+          ]
+        },
+        "steps": [
+          {
+            "sql": "INSERT INTO invoice VALUES (2,'void',57,'s2');",
+            "role": "admin"
+          },
+          {
+            "sql": "UPDATE invoice SET status=status WHERE id=2;",
+            "role": "app"
+          },
+          {
+            "sql": "UPDATE invoice SET password_hash='rotated' WHERE id=2;",
+            "role": "app"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "invoice",
+            "op": "INSERT",
+            "record_id": {
+              "id": 2
+            },
+            "changed": null,
+            "actor": null,
+            "actor_source": null,
+            "before_keys": null,
+            "after_keys": [
+              "id",
+              "status",
+              "total"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "t8-truncate-records-table-and-actor",
+      "description": "T8: TRUNCATE writes one row with null record_id/before/after/changed and captures the trailing comment actor.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {
+          "line_item": []
+        },
+        "steps": [
+          {
+            "sql": "TRUNCATE line_item /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+            "role": "app",
+            "actor_comment": "/*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [
+          {
+            "table_name": "line_item",
+            "op": "TRUNCATE",
+            "record_id": null,
+            "changed": null,
+            "actor": {
+              "type": "user",
+              "id": "usr_42"
+            },
+            "actor_source": "comment",
+            "before_keys": null,
+            "after_keys": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "t9-app-role-cannot-tamper-with-history",
+      "description": "T9: Application role receives SQLSTATE 42501 (insufficient_privilege) on direct INSERT, UPDATE, and DELETE on auditstream.changes.",
+      "input": {
+        "schema_sql": "CREATE TABLE invoice (id int PRIMARY KEY, status text, total numeric, password_hash text);\nCREATE TABLE line_item (id int PRIMARY KEY, invoice_id int REFERENCES invoice(id) ON DELETE CASCADE, qty int);",
+        "excluded_columns": {},
+        "steps": [
+          {
+            "sql": "INSERT INTO auditstream.changes(op) VALUES ('FAKE');",
+            "role": "app"
+          },
+          {
+            "sql": "UPDATE auditstream.changes SET actor = NULL;",
+            "role": "app"
+          },
+          {
+            "sql": "DELETE FROM auditstream.changes;",
+            "role": "app"
+          }
+        ]
+      },
+      "expected": {
+        "rows": [],
+        "step_errors": [
+          {
+            "step_index": 0,
+            "sqlstate": "42501"
+          },
+          {
+            "step_index": 1,
+            "sqlstate": "42501"
+          },
+          {
+            "step_index": 2,
+            "sqlstate": "42501"
+          }
+        ]
+      }
+    }
+  ]
+}

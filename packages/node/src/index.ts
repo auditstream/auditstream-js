@@ -14,3 +14,14 @@ export {
   MAX_PAYLOAD_BYTES,
   type NestedActor,
 } from "./context.js";
+
+export {
+  type ActorSource,
+  type DecodedTransport,
+  decodeScope,
+  encodeScope,
+  isTagged,
+  MAX_ENCODED_COMMENT_CHARS,
+  setConfigValue,
+  tagSql,
+} from "./transport.js";
