@@ -431,6 +431,8 @@ describe("@auditstream/drizzle on real engine-generated migrations (0.45 and 1.x
           neonConfig.pipelineConnect = false;
 
           pool = wrapPgPool(new NeonPool({ connectionString: proxy.urlFor(db.database), max: 5 }));
+          // Suppress idle WebSocket disconnect 'error' events during proxy startup warmup and teardown.
+          pool.on("error", () => {});
           await waitForNeonWsReady(pool);
           const orm =
             version === "0.45" ? drizzleNeon045({ client: pool }) : drizzleNeonV1({ client: pool });
