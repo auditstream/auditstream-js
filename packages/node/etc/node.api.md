@@ -72,10 +72,42 @@ export interface AuditNamespace {
     current(): AuditScope | undefined;
     history(exec: AuditHistoryExecutor, query: AuditHistoryQuery): Promise<HistoryEntry[]>;
     log(exec: AuditLogExecutor, event: AuditLogEvent): Promise<void>;
+    query(exec: AuditQueryExecutor, query: AuditQuery): Promise<AuditQueryPage>;
 }
 
 // @public
 export type AuditOp = DbOp | (string & {});
+
+// @public
+export interface AuditQuery {
+    readonly actor?: string | undefined;
+    readonly cursor?: string | undefined;
+    readonly limit?: number | undefined;
+    readonly op?: AuditOp | readonly AuditOp[] | undefined;
+    readonly opPrefix?: string | undefined;
+    readonly recordId?: JsonObject | undefined;
+    readonly schema?: string | undefined;
+    readonly schemaName?: string | undefined;
+    readonly since?: Date | string | undefined;
+    readonly source?: EventSourceKind | undefined;
+    readonly table?: string | undefined;
+    readonly tenant?: string | undefined;
+    readonly unbounded?: boolean | undefined;
+    readonly until?: Date | string | undefined;
+}
+
+// @public
+export type AuditQueryExecutor = (text: string, values: AuditQueryValues) => AuditHistoryQueryResult | PromiseLike<AuditHistoryQueryResult>;
+
+// @public
+export interface AuditQueryPage {
+    readonly entries: readonly HistoryEntry[];
+    readonly hasMore: boolean;
+    readonly nextCursor: string | null;
+}
+
+// @public
+export type AuditQueryValues = (string | number)[];
 
 // @public
 export interface AuditScope {
@@ -185,6 +217,9 @@ export const MAX_HISTORY_LIMIT: 1000;
 
 // @public
 export const MAX_PAYLOAD_BYTES: 512;
+
+// @public
+export const MAX_QUERY_OPS: 20;
 
 // @public
 export interface NestedActor {

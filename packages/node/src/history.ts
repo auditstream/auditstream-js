@@ -179,7 +179,8 @@ export interface AuditHistoryQuery {
   readonly limit?: number | undefined;
 }
 
-const VALID_SCHEMA_PATTERN = /^[a-z_][a-z0-9_]*$/;
+/** Internal schema identifier validation pattern shared with `query.ts`. */
+export const VALID_SCHEMA_PATTERN: RegExp = /^[a-z_][a-z0-9_]*$/;
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const RFC3339_UTC_MICROS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -190,6 +191,14 @@ const VALID_ACTOR_SOURCES: ReadonlySet<string> = new Set<ActorSource>([
   "invalid",
 ]);
 const VALID_SOURCES: ReadonlySet<string> = new Set<EventSourceKind>(["db", "app"]);
+
+/** Internal SQL projection list for the 18 normative history columns shared with `query.ts`. */
+export const HISTORY_SELECT_COLUMNS: string =
+  `id::text AS id, event_id::text AS event_id, ` +
+  `pg_catalog.to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at, ` +
+  `xact_id::text AS xact_id, ` +
+  `source, schema_name, table_name, table_oid, op, record_id, before, after, changed, ` +
+  `actor, context, actor_source, db_user, schema_version`;
 
 interface JsonParseReviverContext {
   readonly source?: string;
@@ -205,7 +214,8 @@ type JsonParseWithContext = (
   ) => unknown,
 ) => unknown;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+/** Internal plain-object check shared with `query.ts`. */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -443,7 +453,8 @@ function normalizeTableOid(raw: unknown): number | null {
   throw new AuditstreamError("INVALID_RECORD", "history row table_oid must be a number or null");
 }
 
-function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
+/** Internal row decoder shared with `query.ts`. */
+export function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
   const id =
     typeof row.id === "string" ? row.id : typeof row.id === "number" ? String(row.id) : null;
   if (id === null || id.length === 0) {
@@ -502,32 +513,16 @@ function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
   };
 }
 
-/**
- * Reads recorded audit history for a single record from `{schema}.changes`, ordered newest first
- * (`occurred_at DESC, id DESC`).
- *
- * - Sends one parameterized `SELECT` selecting only the 18 normative columns from
- *   `spec/history-table.md`, bound as `($1::text, $2::jsonb, $3::int)`.
- * - Validates `schema` against `^[a-z_][a-z0-9_]*$` before sending any SQL and double-quotes
- *   the identifier in the query.
- * - Defaults `limit` to `50` and enforces `1..=1000` (clamping values above `1000`? No,
- *   values above `1000` or below `1` throw {@link AuditstreamError} `INVALID_QUERY`).
- */
-export async function readHistory(
-  exec: AuditHistoryExecutor,
-  query: AuditHistoryQuery,
-): Promise<HistoryEntry[]> {
+/** Internal shared validation for `exec`, `query`, `schema`, and `limit`. */
+export function validateQueryBase(
+  exec: unknown,
+  query: unknown,
+): { readonly schema: string; readonly limit: number } {
   if (typeof exec !== "function") {
     throw new AuditstreamError("INVALID_QUERY", "exec must be a function");
   }
   if (!isPlainObject(query)) {
     throw new AuditstreamError("INVALID_QUERY", "query must be an object");
-  }
-  if (typeof query.table !== "string" || query.table.trim().length === 0) {
-    throw new AuditstreamError("INVALID_QUERY", "query.table must be a non-empty string");
-  }
-  if (!isPlainObject(query.recordId)) {
-    throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
   }
 
   const schema = query.schema ?? "auditstream";
@@ -551,9 +546,16 @@ export async function readHistory(
     );
   }
 
-  let recordIdJson: string;
+  return { schema, limit };
+}
+
+/** Internal shared serializer for `query.recordId`. */
+export function serializeRecordIdJson(raw: unknown): string {
+  if (!isPlainObject(raw)) {
+    throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
+  }
   try {
-    recordIdJson = JSON.stringify(query.recordId);
+    return JSON.stringify(raw);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new AuditstreamError(
@@ -561,21 +563,45 @@ export async function readHistory(
       `query.recordId is not JSON-serializable: ${detail}`,
     );
   }
+}
+
+/** Internal shared result row extractor accepting both row arrays and `{ rows }` objects. */
+export function extractQueryRows(
+  result: AuditHistoryQueryResult,
+): readonly Record<string, unknown>[] {
+  return Array.isArray(result)
+    ? result
+    : (result as { readonly rows: readonly Record<string, unknown>[] }).rows;
+}
+
+/**
+ * Reads recorded audit history for a single record from `{schema}.changes`, ordered newest first
+ * (`occurred_at DESC, id DESC`).
+ *
+ * - Sends one parameterized `SELECT` selecting only the 18 normative columns from
+ *   `spec/history-table.md`, bound as `($1::text, $2::jsonb, $3::int)`.
+ * - Validates `schema` against `^[a-z_][a-z0-9_]*$` before sending any SQL and double-quotes
+ *   the identifier in the query.
+ * - Defaults `limit` to `50` and enforces `1..=1000` (values outside `1..=1000` throw
+ *   {@link AuditstreamError} `INVALID_QUERY`).
+ */
+export async function readHistory(
+  exec: AuditHistoryExecutor,
+  query: AuditHistoryQuery,
+): Promise<HistoryEntry[]> {
+  const { schema, limit } = validateQueryBase(exec, query);
+  if (typeof query.table !== "string" || query.table.trim().length === 0) {
+    throw new AuditstreamError("INVALID_QUERY", "query.table must be a non-empty string");
+  }
+  const recordIdJson = serializeRecordIdJson(query.recordId);
 
   const sql =
-    `SELECT id::text AS id, event_id::text AS event_id, ` +
-    `pg_catalog.to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at, ` +
-    `xact_id::text AS xact_id, ` +
-    `source, schema_name, table_name, table_oid, op, record_id, before, after, changed, ` +
-    `actor, context, actor_source, db_user, schema_version ` +
+    `SELECT ${HISTORY_SELECT_COLUMNS} ` +
     `FROM "${schema}"."changes" ` +
     `WHERE table_name = $1::text AND record_id = $2::jsonb ` +
     `ORDER BY occurred_at DESC, id DESC ` +
     `LIMIT $3::int`;
 
   const result = await exec(sql, [query.table, recordIdJson, limit]);
-  const rows = Array.isArray(result)
-    ? result
-    : (result as { readonly rows: readonly Record<string, unknown>[] }).rows;
-  return rows.map(rowToHistoryEntry);
+  return extractQueryRows(result).map(rowToHistoryEntry);
 }
