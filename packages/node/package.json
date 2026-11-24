@@ -1,0 +1,67 @@
+{
+  "name": "@auditstream/node",
+  "version": "0.1.0",
+  "description": "Actor context propagation and event helpers for Auditstream",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/auditstream/auditstream-js.git",
+    "directory": "packages/node"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./express": {
+      "types": "./dist/express.d.mts",
+      "default": "./dist/express.mjs"
+    },
+    "./hono": {
+      "types": "./dist/hono.d.mts",
+      "default": "./dist/hono.mjs"
+    },
+    "./next": {
+      "types": "./dist/next.d.mts",
+      "default": "./dist/next.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts"
+  },
+  "peerDependencies": {
+    "express": ">=4 <6",
+    "hono": ">=4 <5",
+    "next": ">=15 <17"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "next": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

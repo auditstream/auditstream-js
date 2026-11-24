@@ -1,0 +1,57 @@
+{
+  "name": "@auditstream/drizzle",
+  "version": "0.1.0",
+  "description": "Drizzle ORM wrappers and comment helpers for Auditstream",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/auditstream/auditstream-js.git",
+    "directory": "packages/drizzle"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./pg": {
+      "types": "./dist/pg.d.mts",
+      "default": "./dist/pg.mjs"
+    },
+    "./neon-http": {
+      "types": "./dist/neon-http.d.mts",
+      "default": "./dist/neon-http.mjs"
+    },
+    "./postgres-js": {
+      "types": "./dist/postgres-js.d.mts",
+      "default": "./dist/postgres-js.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts"
+  },
+  "peerDependencies": {
+    "@auditstream/node": "workspace:*",
+    "drizzle-orm": "^0.45.2 || >=1.0.0-rc.1 <2.0.0"
+  },
+  "devDependencies": {
+    "@auditstream/node": "workspace:*",
+    "@types/node": "catalog:",
+    "drizzle-orm": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@auditstream/test-utils",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal Postgres and PgBouncer test harness for auditstream-js",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "@testcontainers/postgresql": "catalog:",
+    "pg": "catalog:",
+    "testcontainers": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
