@@ -8,12 +8,24 @@ This example shows Next.js 16 App Router running with Prisma 7 and Auditstream.
 - Route Handlers (`POST /api/invoices`, `PATCH /api/invoices/[id]`) wrapped with `withAudit` from `@auditstream/node/next`.
 - A Server Action (`src/app/actions.ts`) wrapped with `auditAction` from `@auditstream/node/next`.
 - A `set_config` fallback route (`POST /api/invoices/[id]/approve`) using `auditTransaction` from `@auditstream/prisma`.
+- An application-event route (`POST /api/invoices/[id]/export`) recording `source = 'app'` events through `audit.log()`.
+- A copy-paste, BFF-safe Activity Feed (`/activity` + `GET /api/activity`) powered by `audit.query()` with keyset pagination (`nextCursor` / `hasMore`, zero `count(*)` queries).
 - Real engine-generated Prisma migrations stored in `prisma/migrations/`.
 
-> **Demo-only authentication:** This example reads the actor from the `x-demo-user` HTTP header.
-> Never trust a client-supplied header in production.
-> Real apps must resolve the actor from a verified session or JWT.
+> **Demo-only authentication:** This example reads the actor and optional tenant from the `x-demo-user` and `x-demo-tenant` HTTP headers.
+> Never trust client-supplied headers or URL query parameters in production.
+> Real apps must resolve the actor and tenant from a verified session or JWT and fail closed (`401`/`403`) on unauthenticated requests.
 > Actors carry IDs only: never include names, emails, or IP addresses.
+
+## Copy-paste Activity Feed (BFF pattern & why there is no `@auditstream/react`)
+
+Auditstream intentionally does **not** publish a styled `@auditstream/react` npm package (see [ADR-0009](https://github.com/auditstream/auditstream/blob/main/docs/decisions/0009-no-ui-package-or-in-db-partition-sealing.md)). Keeping `@auditstream/node` zero-dependency and strictly server-side avoids coupling your design system to a third-party UI package and prevents raw `HistoryEntry` database rows from leaking to browsers.
+
+Instead, copy and adapt these three files into your own Next.js app:
+
+- `src/lib/activity.ts` — calls `audit.query()`, applies a default 30-day lookback window so PostgreSQL prunes older monthly partitions, batch-resolves opaque actor IDs (`spec/actor.md` IDs-only rule) against your user store on the server, and projects each `HistoryEntry` through an **explicit allowlist DTO** (`ActivityFeedItem`). Internal columns (`id`, `xact_id`, `table_oid`, `db_user`, `actor_source`, `schema_version`), raw `before`/`after` row images, and `context` (such as IP addresses) never leave the server.
+- `src/app/api/activity/route.ts` — BFF Route Handler that validates filters (`source`, `opPrefix`, `since`, `until`, `cursor`, `limit`), derives `tenant` strictly from server-side auth context (ignoring any `?tenant=` query parameter from the browser), and returns `{ items, nextCursor, hasMore }` with zero `count(*)` queries.
+- `src/app/activity/page.tsx` and `src/app/activity/activity-feed.tsx` — zero-dependency React Server + Client Component rendering both database changes (`source: "db"`) and application events (`source: "app"`) with filter controls and a cursor-based **Load more** button.
 
 ## Why `withAudit` and `auditAction` instead of `proxy`
 
@@ -82,13 +94,25 @@ curl -s -X POST http://127.0.0.1:3000/api/invoices/1/approve \
   -H 'x-demo-user: carol' \
   -d '{"status":"approved"}'
 
+# Record an application-level audit event via audit.log() (source = 'app')
+curl -s -X POST http://127.0.0.1:3000/api/invoices/1/export \
+  -H 'content-type: application/json' \
+  -H 'x-demo-user: carol' \
+  -d '{"format":"csv"}'
+
+# Query the allowlisted Activity Feed BFF with keyset pagination
+curl -s 'http://127.0.0.1:3000/api/activity?limit=10'
+
+# Filter to application events with opPrefix
+curl -s 'http://127.0.0.1:3000/api/activity?source=app&opPrefix=invoice.'
+
 # Create an unscoped invoice (no x-demo-user header -> actor is NULL)
 curl -s -X POST http://127.0.0.1:3000/api/invoices \
   -H 'content-type: application/json' \
   -d '{"status":"system","total":"10.00"}'
 ```
 
-You can also open `http://127.0.0.1:3000/` to submit the `auditAction` Server Action form.
+You can also open `http://127.0.0.1:3000/` to submit the `auditAction` Server Action form, or open `http://127.0.0.1:3000/activity` to browse and paginate the Activity Feed.
 
 ## Run the smoke test
 
