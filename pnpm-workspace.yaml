@@ -10,7 +10,9 @@ allowBuilds:
   "ssh2": false
 
 catalog:
+  "@arethetypeswrong/cli": "^0.18.5"
   "@biomejs/biome": "^2.6.8"
+  "@microsoft/api-extractor": "^7.60.1"
   "@neondatabase/serverless": "1.2.1"
   "@prisma/adapter-neon": "7.10.1"
   "@prisma/adapter-pg": "7.10.1"
@@ -19,11 +21,13 @@ catalog:
   "@testcontainers/postgresql": "^12.2.2"
   "@types/node": "^22.20.5"
   "@types/pg": "8.23.1"
+  "@vitest/coverage-v8": "^5.1.1"
   "drizzle-orm": "0.45.4"
   "drizzle-orm-v1": "npm:drizzle-orm@1.0.0-rc.6"
   "pg": "8.23.1"
   "postgres": "3.4.7"
   "prisma": "7.10.1"
+  "publint": "^0.3.25"
   "testcontainers": "^12.2.2"
   "tsdown": "0.23.7"
   "turbo": "^2.11.13"

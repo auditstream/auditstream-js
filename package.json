@@ -4,16 +4,24 @@
   "type": "module",
   "packageManager": "pnpm@12.15.0",
   "scripts": {
-    "check": "biome ci . && turbo run typecheck build test",
+    "check": "biome ci . && turbo run typecheck build test && pnpm api:check && pnpm check:packages",
+    "check:packages": "node scripts/check-packages.mjs",
+    "api:check": "for f in packages/*/api-extractor*.json; do pnpm exec api-extractor run -c \"$f\" || exit 1; done",
+    "api:update": "for f in packages/*/api-extractor*.json; do pnpm exec api-extractor run --local -c \"$f\" || exit 1; done",
     "lint": "biome ci .",
     "format": "biome check --write .",
     "typecheck": "turbo run typecheck",
     "build": "turbo run build",
-    "test": "turbo run test"
+    "test": "turbo run test",
+    "test:smoke": "turbo run test:smoke"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "catalog:",
     "@biomejs/biome": "catalog:",
+    "@microsoft/api-extractor": "catalog:",
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "publint": "catalog:",
     "tsdown": "catalog:",
     "turbo": "catalog:",
     "typescript": "catalog:",
