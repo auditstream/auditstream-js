@@ -8,7 +8,20 @@
 export function auditstream(): SqlCommenterPlugin;
 
 // @public
+export function auditTransaction<TTx extends PrismaRawExecutor, TResult, TOptions = unknown>(prisma: PrismaTransactionRunner<TTx, TOptions>, fn: (tx: TTx) => Promise<TResult>, options?: TOptions): Promise<TResult>;
+
+// @public
 export const PACKAGE_NAME: "@auditstream/prisma";
+
+// @public
+export interface PrismaRawExecutor {
+    $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<number>;
+}
+
+// @public
+export interface PrismaTransactionRunner<TTx extends PrismaRawExecutor, TOptions = unknown> {
+    $transaction<TResult>(fn: (tx: TTx) => Promise<TResult>, options?: TOptions): Promise<TResult>;
+}
 
 // @public
 export interface SqlCommenterContext {
