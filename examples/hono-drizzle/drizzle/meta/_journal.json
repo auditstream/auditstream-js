@@ -1,0 +1,20 @@
+{
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "breakpoints": true,
+      "idx": 0,
+      "tag": "0000_init_tables",
+      "version": "7",
+      "when": 1767225600000
+    },
+    {
+      "breakpoints": true,
+      "idx": 1,
+      "tag": "0001_auditstream",
+      "version": "7",
+      "when": 1795521600000
+    }
+  ],
+  "version": "7"
+}

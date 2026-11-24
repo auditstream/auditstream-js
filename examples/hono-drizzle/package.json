@@ -1,0 +1,30 @@
+{
+  "name": "@auditstream/example-hono-drizzle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Runnable Hono and Drizzle 0.45 example with Auditstream actor capture",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "migrate": "node dist/migrate.js",
+    "start": "node dist/index.js",
+    "test:smoke": "vitest run --config vitest.smoke.config.ts"
+  },
+  "dependencies": {
+    "@auditstream/drizzle": "workspace:*",
+    "@auditstream/node": "workspace:*",
+    "@hono/node-server": "catalog:",
+    "drizzle-orm": "catalog:",
+    "hono": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@auditstream/test-utils": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

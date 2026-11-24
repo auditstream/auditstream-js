@@ -170,6 +170,9 @@ catalogs:
     '@biomejs/biome':
       specifier: ^2.6.8
       version: 2.6.8
+    '@hono/node-server':
+      specifier: 2.1.11
+      version: 2.1.11
     '@microsoft/api-extractor':
       specifier: ^7.60.1
       version: 7.60.1
@@ -206,6 +209,9 @@ catalogs:
     drizzle-orm-v1:
       specifier: npm:drizzle-orm@1.0.0-rc.6
       version: 1.0.0-rc.6
+    hono:
+      specifier: 4.13.20
+      version: 4.13.20
     pg:
       specifier: 8.23.1
       version: 8.23.1
@@ -265,6 +271,43 @@ importers:
       turbo:
         specifier: 'catalog:'
         version: 2.11.13
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vitest:
+        specifier: 'catalog:'
+        version: 5.1.1(@types/node@22.20.5)(@vitest/coverage-v8@5.1.1)(vite@8.3.8(@types/node@22.20.5)(jiti@2.7.0)(yaml@2.9.1))
+
+  examples/hono-drizzle:
+    dependencies:
+      '@auditstream/drizzle':
+        specifier: workspace:*
+        version: link:../../packages/drizzle
+      '@auditstream/node':
+        specifier: workspace:*
+        version: link:../../packages/node
+      '@hono/node-server':
+        specifier: 'catalog:'
+        version: 2.1.11(hono@4.13.20)
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.4(@electric-sql/pglite@0.4.3)(@neondatabase/serverless@1.2.1)(@prisma/client@7.10.1(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(typescript@6.0.3))(typescript@6.0.3))(@types/pg@8.23.1)(mysql2@3.24.4(@types/node@22.20.5))(pg@8.23.1)(postgres@3.4.7)(prisma@7.10.1(@types/node@22.20.5)(@types/react@19.3.0)(magicast@0.5.5)(typescript@6.0.3))
+      hono:
+        specifier: 'catalog:'
+        version: 4.13.20
+      pg:
+        specifier: 'catalog:'
+        version: 8.23.1
+    devDependencies:
+      '@auditstream/test-utils':
+        specifier: workspace:*
+        version: link:../../packages/test-utils
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      '@types/pg':
+        specifier: 'catalog:'
+        version: 8.23.1
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -651,6 +694,12 @@ packages:
     resolution: {integrity: sha512-wtF6h+DY6M3YaDBPAmvuuA6jV8Sif9MjtOI5euKFWRgCDl5PeDpPsHR9u2l6St5ceY8AZgoNDww5+HvEsXFsGg==}
     engines: {node: '>=6'}
     hasBin: true
+
+  '@hono/node-server@2.1.11':
+    resolution: {integrity: sha512-KzKz9vl4vvr1vgLHamj+g5uonbrj5NwAdO3yzOS6cd2HjALVeOgTgeZOyAzNxejbkfOOPIcvuf/Tg8l1pEFLog==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4 || ^5.0.0-0
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -3873,6 +3922,10 @@ snapshots:
       long: 5.3.2
       protobufjs: 7.6.6
       yargs: 17.7.3
+
+  '@hono/node-server@2.1.11(hono@4.13.20)':
+    dependencies:
+      hono: 4.13.20
 
   '@img/colour@1.1.0':
     optional: true
