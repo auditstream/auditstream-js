@@ -4,6 +4,7 @@
   "description": "Actor context propagation and event helpers for Auditstream",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://auditstream.dev/docs/adapters",
   "repository": {
     "type": "git",
     "url": "https://github.com/auditstream/auditstream-js.git",

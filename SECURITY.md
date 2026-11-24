@@ -2,11 +2,11 @@
 
 ## Supported versions
 
-During v0.x development, security fixes apply to the latest `0.1.x` release of `@auditstream/node`, `@auditstream/prisma` and `@auditstream/drizzle`, as well as `main` (Node.js `>=22.12`, Prisma `7.1+` within `7.x`, Drizzle `0.45` and `1.x`; see [Releases: Supported versions](https://github.com/auditstream/auditstream/blob/main/docs/handbook/releases.md#supported-versions)).
+During v0.x development, security fixes apply to the latest 0.x release (currently `0.2.x`) of `@auditstream/node`, `@auditstream/prisma` and `@auditstream/drizzle`, as well as `main` (Node.js `>=22.12`, Prisma `7.1+` within `7.x`, Drizzle `0.45` and `1.x`; see [Releases: Supported versions](https://github.com/auditstream/auditstream/blob/main/docs/handbook/releases.md#supported-versions)).
 
 | Version | Supported |
 | --- | --- |
-| `0.1.x` / `main` | Yes |
+| `0.2.x` / `main` | Yes |
 | Earlier versions | No |
 
 ## Reporting a vulnerability

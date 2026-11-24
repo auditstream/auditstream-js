@@ -4,6 +4,7 @@
   "description": "Prisma 7 SQL comments plugin and set_config fallback for Auditstream",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://auditstream.dev/docs/adapters",
   "repository": {
     "type": "git",
     "url": "https://github.com/auditstream/auditstream-js.git",
