@@ -1,13 +1,4 @@
 # OSV-Scanner configuration for auditstream/auditstream-js.
 # Mirrors auditstream/auditstream's deny.toml policy: only time-boxed ignores for
-# dev/test-only transitive dependencies awaiting upstream major upgrades.
-
-[[IgnoredVulns]]
-id = "GHSA-3g3m-2fjr-6pw4"
-ignoreUntil = 2027-02-24
-reason = "glob 10.5.0 via archiver-utils -> archiver -> testcontainers 12.2.2 in private @auditstream/test-utils (not shipped in published packages); fix requires major glob 14 upgrade upstream"
-
-[[IgnoredVulns]]
-id = "GHSA-g3hv-75wg-m249"
-ignoreUntil = 2027-02-24
-reason = "minimatch 9.0.9 (via glob 10.5.0 -> testcontainers in private @auditstream/test-utils) and 10.2.3 (via @microsoft/api-extractor 7.60.1 devDependency, not shipped in published packages); fix requires major minimatch 11 upgrade upstream"
+# dev/test-only transitive dependencies awaiting upstream fixes.
+# Currently empty: all known advisories are resolved in pnpm-lock.yaml.

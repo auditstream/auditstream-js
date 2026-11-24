@@ -7,6 +7,10 @@ minimumReleaseAge: 1440
 overrides:
   # GHSA-7589-6fvf-x4pw (High, CVSS 8.7): ReDoS in effect <3.22.1 via @prisma/config.
   "effect": "^3.22.1"
+  # GHSA-3g3m-2fjr-6pw4 (Medium, CWE-400): AbortSignal cancellation bypass in glob <=14.0.1 via testcontainers -> archiver-utils.
+  "glob": "^14.0.2"
+  # GHSA-g3hv-75wg-m249 (Medium, CWE-405): DoS via globparts amplification in minimatch <11.0.1 via @microsoft/api-extractor and glob.
+  "minimatch": "^11.0.1"
 allowBuilds:
   "@prisma/engines": false
   "cpu-features": false
