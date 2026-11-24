@@ -125,6 +125,76 @@
         "context": null,
         "actor_source": "invalid"
       }
+    },
+    {
+      "name": "malformed-set-config-unknown-type-does-not-fall-through",
+      "description": "set_config with actor.type outside the 5 spec enum values yields invalid and MUST NOT fall through.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+        "set_config": "{\"type\":\"bot\",\"id\":\"b1\"}",
+        "jwt_claims": null
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "malformed-set-config-non-object-context-does-not-fall-through",
+      "description": "set_config with non-object context yields invalid and MUST NOT fall through.",
+      "input": {
+        "sql": "UPDATE invoice SET status='paid' WHERE id=1 /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0'*/;",
+        "set_config": "{\"type\":\"user\",\"id\":\"u1\",\"context\":123}",
+        "jwt_claims": null
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "jwt-non-object-claims-invalid",
+      "description": "Non-object JSON in request.jwt.claims yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET total=55 WHERE id=2;",
+        "set_config": null,
+        "jwt_claims": "[1,2]"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "jwt-object-without-sub-is-null",
+      "description": "Valid JSON object in request.jwt.claims without sub (for example anonymous PostgREST role) yields null.",
+      "input": {
+        "sql": "UPDATE invoice SET total=55 WHERE id=2;",
+        "set_config": null,
+        "jwt_claims": "{\"role\":\"anon\"}"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": null
+      }
+    },
+    {
+      "name": "jwt-empty-sub-invalid",
+      "description": "Empty string sub claim in request.jwt.claims yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET total=55 WHERE id=2;",
+        "set_config": null,
+        "jwt_claims": "{\"sub\":\"\"}"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
     }
   ]
 }

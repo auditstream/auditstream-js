@@ -341,4 +341,79 @@ describe("@auditstream/node transport codec", () => {
     expect(isTagged(oversizedComment)).toBe(false);
     expect(decodeScope(oversizedComment).actorSource).toBeNull();
   });
+
+  it("decodeScope enforces full Spec 0.1.0 actor and context validation while preserving unknown keys", () => {
+    const toCommentSql = (payload: unknown): string => {
+      const b64 = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+      return `UPDATE invoice SET status = 'ok' /*auditstream='${b64}'*/`;
+    };
+
+    const invalidPayloads: readonly unknown[] = [
+      { type: "bot", id: "b1" },
+      { type: "user", id: "u1", tenant: "" },
+      { type: "user", id: "u1", tenant: 123 },
+      { type: "user", id: "u1", tenant: null },
+      { type: "ai_agent", id: "a1", onBehalfOf: "bad" },
+      { type: "ai_agent", id: "a1", onBehalfOf: { type: "bot", id: "b1" } },
+      { type: "ai_agent", id: "a1", onBehalfOf: { type: "user", id: "" } },
+      { type: "ai_agent", id: "a1", onBehalfOf: { type: "user", id: "u1", tenant: "" } },
+      {
+        type: "ai_agent",
+        id: "a1",
+        onBehalfOf: { type: "user", id: "u1", onBehalfOf: null },
+      },
+      {
+        type: "ai_agent",
+        id: "a1",
+        onBehalfOf: {
+          type: "ai_agent",
+          id: "a2",
+          onBehalfOf: { type: "user", id: "u1" },
+        },
+      },
+      { type: "user", id: "u1", context: "bad" },
+      { type: "user", id: "u1", context: null },
+      { type: "user", id: "u1", context: [] },
+      { type: "user", id: "u1", context: { requestId: "" } },
+      { type: "user", id: "u1", context: { source: 42 } },
+      { type: "user", id: "u1", context: { ip: "" } },
+      { type: "user", id: "u1", context: { userAgent: null } },
+    ];
+
+    for (const payload of invalidPayloads) {
+      expect(decodeScope(toCommentSql(payload)), JSON.stringify(payload)).toEqual({
+        actor: null,
+        context: null,
+        actorSource: "invalid",
+      });
+    }
+
+    // Empty context object and additive unknown keys remain valid.
+    expect(decodeScope(toCommentSql({ type: "user", id: "u1", context: {} }))).toEqual({
+      actor: { type: "user", id: "u1" },
+      context: {},
+      actorSource: "comment",
+    });
+
+    expect(
+      decodeScope(
+        toCommentSql({
+          type: "ai_agent",
+          id: "a1",
+          futureKey: "v1",
+          onBehalfOf: { type: "user", id: "u1", extraNested: true },
+          context: { requestId: "r1", futureCtx: 42 },
+        }),
+      ),
+    ).toEqual({
+      actor: {
+        type: "ai_agent",
+        id: "a1",
+        futureKey: "v1",
+        onBehalfOf: { type: "user", id: "u1", extraNested: true },
+      },
+      context: { requestId: "r1", futureCtx: 42 },
+      actorSource: "comment",
+    });
+  });
 });

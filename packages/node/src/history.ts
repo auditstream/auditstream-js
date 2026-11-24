@@ -1,5 +1,5 @@
 import { type Actor, type AuditContext, AuditstreamError } from "./context.js";
-import type { ActorSource } from "./transport.js";
+import { type ActorSource, isValidActorObject, isValidContextObject } from "./transport.js";
 
 /**
  * Auditstream history schema version supported by Specification 0.1.0.
@@ -307,19 +307,26 @@ function validateNullableActor(value: unknown): Actor | null {
   if (value === null || value === undefined) {
     return null;
   }
-  if (
-    !isPlainObject(value) ||
-    typeof value.type !== "string" ||
-    value.type.length === 0 ||
-    typeof value.id !== "string" ||
-    value.id.length === 0
-  ) {
+  if (!isValidActorObject(value)) {
     throw new AuditstreamError(
       "INVALID_RECORD",
-      "actor must be null or an object with non-empty string type and id",
+      "actor must be null or conform to Auditstream Specification 0.1.0",
     );
   }
   return value as unknown as Actor;
+}
+
+function validateNullableContext(value: unknown): AuditContext | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!isValidContextObject(value)) {
+    throw new AuditstreamError(
+      "INVALID_RECORD",
+      "context must be null or a JSON object with non-empty known fields",
+    );
+  }
+  return value as AuditContext;
 }
 
 function validateNullableActorSource(value: unknown): ActorSource | null {
@@ -420,7 +427,7 @@ export function parseExportRecord(line: string): ExportRecord {
     after: validateNullableObject(parsed.after, "after"),
     changed: validateNullableStringArray(parsed.changed, "changed"),
     actor: validateNullableActor(parsed.actor),
-    context: validateNullableObject(parsed.context, "context") as AuditContext | null,
+    context: validateNullableContext(parsed.context),
     actor_source: validateNullableActorSource(parsed.actor_source),
     db_user: parsed.db_user,
     schema_version: parsed.schema_version,
@@ -506,7 +513,7 @@ export function rowToHistoryEntry(row: Record<string, unknown>): HistoryEntry {
     after: validateNullableObject(row.after, "after"),
     changed: validateNullableStringArray(row.changed, "changed"),
     actor: validateNullableActor(row.actor),
-    context: validateNullableObject(row.context, "context") as AuditContext | null,
+    context: validateNullableContext(row.context),
     actor_source: validateNullableActorSource(row.actor_source),
     db_user: row.db_user,
     schema_version: schemaVersion,

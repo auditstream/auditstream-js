@@ -58,7 +58,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "minLength": 1
+              "enum": ["user", "api_key", "ai_agent", "service", "system"]
             },
             "id": {
               "type": "string",
@@ -75,7 +75,7 @@
               "properties": {
                 "type": {
                   "type": "string",
-                  "minLength": 1
+                  "enum": ["user", "api_key", "ai_agent", "service", "system"]
                 },
                 "id": {
                   "type": "string",

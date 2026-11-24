@@ -250,6 +250,109 @@
         "context": null,
         "actor_source": "invalid"
       }
+    },
+    {
+      "name": "reject-unknown-actor-type",
+      "description": "Actor type outside the 5 spec enum values yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoiYm90IiwiaWQiOiJiMSJ9'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-empty-tenant",
+      "description": "Empty tenant string yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidTEiLCJ0ZW5hbnQiOiIifQ'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-non-string-tenant",
+      "description": "Non-string tenant yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidTEiLCJ0ZW5hbnQiOjEyM30'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-nested-on-behalf-of",
+      "description": "onBehalfOf nested deeper than one level yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImExIiwib25CZWhhbGZPZiI6eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImEyIiwib25CZWhhbGZPZiI6eyJ0eXBlIjoidXNlciIsImlkIjoidTEifX19'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-invalid-on-behalf-of-type",
+      "description": "onBehalfOf with type outside the 5 spec enum values yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoiYWlfYWdlbnQiLCJpZCI6ImExIiwib25CZWhhbGZPZiI6eyJ0eXBlIjoiYm90IiwiaWQiOiJiMSJ9fQ'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-non-object-context",
+      "description": "Non-object context yields actor_source='invalid' rather than silently dropping context.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidTEiLCJjb250ZXh0IjoiYmFkIn0'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "reject-empty-context-field",
+      "description": "Empty string in known context field requestId yields actor_source='invalid'.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidTEiLCJjb250ZXh0Ijp7InJlcXVlc3RJZCI6IiJ9fQ'*/"
+      },
+      "expected": {
+        "actor": null,
+        "context": null,
+        "actor_source": "invalid"
+      }
+    },
+    {
+      "name": "accept-unknown-keys-forward-compat",
+      "description": "Unknown additive keys in actor and context remain permitted for forward compatibility.",
+      "input": {
+        "sql": "UPDATE invoice SET status = 'ok' /*auditstream='eyJ0eXBlIjoidXNlciIsImlkIjoidTEiLCJmdXR1cmVLZXkiOiJ2MSIsImNvbnRleHQiOnsicmVxdWVzdElkIjoicjEiLCJmdXR1cmVDdHgiOjQyfX0'*/"
+      },
+      "expected": {
+        "actor": {
+          "type": "user",
+          "id": "u1",
+          "futureKey": "v1"
+        },
+        "context": {
+          "requestId": "r1",
+          "futureCtx": 42
+        },
+        "actor_source": "comment"
+      }
     }
   ]
 }
