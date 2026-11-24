@@ -1,0 +1,72 @@
+name: Agent-ready task
+description: Propose a small, self-contained task (a maintainer adds agent-ready after review)
+type: Task
+labels:
+  - "status:needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A maintainer reviews the task and adds `agent-ready` once it is fully specified and unblocked. Tasks larger than size M (up to two days) must be split first.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One or two sentences describing what this task delivers.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Links to the handbook section in auditstream/auditstream, spec section and version, ADR, and key constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: scope_in
+    attributes:
+      label: In-scope paths
+      description: Exact files or globs this task may create or modify.
+    validations:
+      required: true
+  - type: textarea
+    id: scope_out
+    attributes:
+      label: Out-of-scope paths
+      description: Files, folders or related work explicitly excluded from this task.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Testable checklist of concrete requirements.
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification commands
+      description: Exact commands that prove every acceptance criterion passes.
+    validations:
+      required: true
+  - type: input
+    id: blocked_by
+    attributes:
+      label: Blocked by
+      description: Blocking issues (e.g. #8, auditstream/auditstream#14) or "Nothing".
+      placeholder: Nothing
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      description: Effort High is never used; split larger tasks first.
+      options:
+        - S (up to one day)
+        - M (up to two days)
+    validations:
+      required: true

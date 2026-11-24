@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Spec change
+    url: https://github.com/auditstream/auditstream/issues/new?template=spec-change.yml
+    about: Propose a change to the Auditstream contract in auditstream/auditstream (spec/).
