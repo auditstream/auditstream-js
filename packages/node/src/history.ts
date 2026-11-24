@@ -65,7 +65,7 @@ export interface HistoryEntry {
   readonly id: string;
   /** Stable UUID identifying the event for downstream deduplication. */
   readonly event_id: string;
-  /** RFC 3339 UTC timestamp when the row was recorded. */
+  /** RFC 3339 UTC timestamp with microsecond precision when the row was recorded. */
   readonly occurred_at: string;
   /** 64-bit PostgreSQL transaction ID (`xid8` returned as a decimal string). */
   readonly xact_id: string;
@@ -421,7 +421,7 @@ function normalizeTimestamp(raw: unknown): string {
   if (raw instanceof Date) {
     return raw.toISOString();
   }
-  if (typeof raw === "string") {
+  if (typeof raw === "string" && raw.length > 0) {
     return raw;
   }
   throw new AuditstreamError("INVALID_RECORD", "history row occurred_at must be a Date or string");
@@ -563,7 +563,9 @@ export async function readHistory(
   }
 
   const sql =
-    `SELECT id::text AS id, event_id::text AS event_id, occurred_at, xact_id::text AS xact_id, ` +
+    `SELECT id::text AS id, event_id::text AS event_id, ` +
+    `pg_catalog.to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at, ` +
+    `xact_id::text AS xact_id, ` +
     `source, schema_name, table_name, table_oid, op, record_id, before, after, changed, ` +
     `actor, context, actor_source, db_user, schema_version ` +
     `FROM "${schema}"."changes" ` +

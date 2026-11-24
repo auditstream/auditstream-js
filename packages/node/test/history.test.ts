@@ -238,6 +238,9 @@ describe("audit.history()", () => {
     );
 
     expect(calls).toHaveLength(1);
+    expect(calls[0]?.text).toContain(
+      `pg_catalog.to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at`,
+    );
     expect(calls[0]?.text).toContain('FROM "custom_audit_2"."changes"');
     expect(calls[0]?.text).toContain("WHERE table_name = $1::text AND record_id = $2::jsonb");
     expect(calls[0]?.text).toContain("ORDER BY occurred_at DESC, id DESC LIMIT $3::int");
@@ -246,11 +249,94 @@ describe("audit.history()", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "42",
+      occurred_at: "2026-11-24T10:15:30.123Z",
       xact_id: "9007199254740993",
       op: "UPDATE",
       actor_source: "comment",
       schema_version: 1,
     });
+  });
+
+  it("preserves full microsecond precision strings returned by PostgreSQL to_char()", async () => {
+    const entries = await audit.history(
+      () => [
+        {
+          id: "101",
+          event_id: "019ab123-4567-7000-8000-000000000099",
+          occurred_at: "2026-11-24T10:15:30.123456Z",
+          xact_id: "501",
+          source: "db",
+          schema_name: "public",
+          table_name: "invoice",
+          table_oid: 16384,
+          op: "INSERT",
+          record_id: { id: 9 },
+          before: null,
+          after: { id: 9 },
+          changed: null,
+          actor: null,
+          context: null,
+          actor_source: null,
+          db_user: "app_user",
+          schema_version: 1,
+        },
+        {
+          id: "100",
+          event_id: "019ab123-4567-7000-8000-000000000098",
+          occurred_at: "2026-11-24T10:15:30.123001Z",
+          xact_id: "500",
+          source: "db",
+          schema_name: "public",
+          table_name: "invoice",
+          table_oid: 16384,
+          op: "INSERT",
+          record_id: { id: 9 },
+          before: null,
+          after: { id: 9 },
+          changed: null,
+          actor: null,
+          context: null,
+          actor_source: null,
+          db_user: "app_user",
+          schema_version: 1,
+        },
+      ],
+      { table: "invoice", recordId: { id: 9 } },
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.occurred_at).toBe("2026-11-24T10:15:30.123456Z");
+    expect(entries[1]?.occurred_at).toBe("2026-11-24T10:15:30.123001Z");
+  });
+
+  it("rejects empty occurred_at strings from malformed rows", async () => {
+    await expect(
+      audit.history(
+        () => [
+          {
+            id: "102",
+            event_id: "019ab123-4567-7000-8000-000000000097",
+            occurred_at: "",
+            xact_id: "502",
+            source: "db",
+            schema_name: "public",
+            table_name: "invoice",
+            table_oid: 16384,
+            op: "INSERT",
+            record_id: { id: 9 },
+            before: null,
+            after: { id: 9 },
+            changed: null,
+            actor: null,
+            context: null,
+            actor_source: null,
+            db_user: "app_user",
+            schema_version: 1,
+          },
+        ],
+        { table: "invoice", recordId: { id: 9 } },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_RECORD" });
   });
 
   it("rejects invalid schema names and invalid limits before sending any SQL", async () => {
