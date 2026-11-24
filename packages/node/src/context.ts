@@ -83,7 +83,11 @@ export interface AuditAsOptions {
 /**
  * Machine-readable error codes emitted by {@link AuditstreamError}.
  */
-export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE";
+export type AuditstreamErrorCode =
+  | "INVALID_ACTOR"
+  | "INVALID_CONTEXT"
+  | "PAYLOAD_TOO_LARGE"
+  | "INVALID_EVENT";
 
 /**
  * Error thrown by Auditstream when an actor or context payload violates Specification 0.1.0.

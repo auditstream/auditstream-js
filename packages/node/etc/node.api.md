@@ -35,9 +35,23 @@ export interface AuditContext {
 }
 
 // @public
+export interface AuditLogEvent {
+    readonly action: string;
+    readonly data?: Record<string, unknown> | null | undefined;
+    readonly target?: Record<string, unknown> | null | undefined;
+}
+
+// @public
+export type AuditLogExecutor = (text: string, values: AuditLogValues) => unknown | PromiseLike<unknown>;
+
+// @public
+export type AuditLogValues = [action: string, target: string | null, data: string | null];
+
+// @public
 export interface AuditNamespace {
     as<T>(actor: Actor, fn: () => T | PromiseLike<T>, options?: AuditAsOptions): Promise<Awaited<T>>;
     current(): AuditScope | undefined;
+    log(exec: AuditLogExecutor, event: AuditLogEvent): Promise<void>;
 }
 
 // @public
@@ -53,7 +67,7 @@ export class AuditstreamError extends Error {
 }
 
 // @public
-export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE";
+export type AuditstreamErrorCode = "INVALID_ACTOR" | "INVALID_CONTEXT" | "PAYLOAD_TOO_LARGE" | "INVALID_EVENT";
 
 // @public
 export interface DecodedTransport {
@@ -70,6 +84,12 @@ export function encodeScope(scope: AuditScope): string;
 
 // @public
 export function isTagged(sql: string): boolean;
+
+// @public
+export const LOG_EVENT_SQL: "SELECT auditstream.log_event($1::text, $2::jsonb, $3::jsonb)";
+
+// @public
+export const MAX_ACTION_LENGTH: 64;
 
 // @public
 export const MAX_ENCODED_COMMENT_CHARS: 683;

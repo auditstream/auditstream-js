@@ -130,10 +130,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @auditstream/test-utils build
       - name: Run Postgres and PgBouncer integration tests
         env:
           TEST_PG_IMAGE: postgres:${{ matrix.pg }}-alpine
-        run: pnpm --filter @auditstream/test-utils test:integration
+        run: |
+          pnpm --filter @auditstream/test-utils test:integration
+          pnpm --filter @auditstream/node test:integration
 
   packages:
     needs: lint
