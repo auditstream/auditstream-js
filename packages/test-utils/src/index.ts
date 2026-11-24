@@ -8,6 +8,12 @@ import {
   type StartedTestContainer,
   Wait,
 } from "testcontainers";
+import {
+  DEFAULT_NEON_PROXY_IMAGE,
+  type NeonProxyInstance,
+  type StartNeonProxyOptions,
+  startNeonProxyForCluster,
+} from "./neon.js";
 import { buildRoleSetupSql, PROTOTYPE_SCHEMA_SQL } from "./schema.js";
 
 /** Application role created once per cluster for adapter capture tests. */
@@ -341,4 +347,22 @@ export async function stopTestCluster(): Promise<void> {
   }
 }
 
+/**
+ * Starts a local Neon HTTP + WebSocket proxy container in front of the test Postgres cluster.
+ */
+export async function startNeonProxy(
+  options: StartNeonProxyOptions = {},
+): Promise<NeonProxyInstance> {
+  const cluster = await getCluster();
+  return startNeonProxyForCluster(
+    {
+      ...cluster,
+      appUser: APP_USER,
+      appPassword: APP_PASSWORD,
+    },
+    options,
+  );
+}
+
 export { buildRoleSetupSql, PROTOTYPE_SCHEMA_SQL } from "./schema.js";
+export { DEFAULT_NEON_PROXY_IMAGE, type NeonProxyInstance, type StartNeonProxyOptions };
