@@ -25,6 +25,7 @@ jobs:
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       snapshot: ${{ steps.check.outputs.snapshot }}
+      has_changesets: ${{ steps.pending.outputs.has_changesets }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,8 +145,12 @@ jobs:
       - name: Publish snapshot release via npm trusted publishing
         if: needs.version.outputs.snapshot == 'true'
         run: |
+          if [ "${{ needs.version.outputs.has_changesets }}" != "true" ]; then
+            printf -- '---\n"@auditstream/node": patch\n---\n\nSnapshot release.\n' > .changeset/snapshot-release.md
+          fi
           pnpm changeset version --snapshot snapshot
           pnpm build
+          pnpm check:packages
           pnpm -r --filter '!@auditstream/test-utils' publish --tag snapshot --access public --no-git-checks
 
       - name: Publish release via npm trusted publishing
