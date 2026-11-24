@@ -8,8 +8,7 @@ on:
       - reopened
       - synchronize
 
-permissions:
-  pull-requests: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,31 +16,8 @@ concurrency:
 
 jobs:
   pr-title:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Validate Conventional Commits title
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          node - <<'EOF'
-          const title = process.env.PR_TITLE || "";
-          const pattern =
-            /^(feat|fix|perf|refactor|docs|test|build|ci|chore|revert|style)(\((node|prisma|drizzle|docs|ci|deps)\))?!?: \S.*$/;
-
-          if (!pattern.test(title)) {
-            console.error(`Invalid PR title: "${title}"`);
-            console.error(
-              "Expected Conventional Commits 1.0: <type>[(<scope>)][!]: <description>",
-            );
-            console.error(
-              "Allowed types: feat, fix, perf, refactor, docs, test, build, ci, chore, revert, style",
-            );
-            console.error(
-              "Allowed scopes (optional): node, prisma, drizzle, docs, ci, deps",
-            );
-            process.exit(1);
-          }
-
-          console.log(`PR title valid: ${title}`);
-          EOF
+    permissions:
+      pull-requests: read
+    uses: auditstream/.github/.github/workflows/reusable-pr-title.yml@85d9a13ddc78591528d7b59db8138b1c0864e2d5 # main
+    with:
+      scopes: "node|prisma|drizzle|docs|ci|deps"
