@@ -31,6 +31,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
@@ -63,6 +64,8 @@ jobs:
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Create or update version pull request
         id: changesets
@@ -130,6 +133,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
 
@@ -144,8 +148,10 @@ jobs:
 
       - name: Publish snapshot release via npm trusted publishing
         if: needs.version.outputs.snapshot == 'true'
+        env:
+          HAS_CHANGESETS: ${{ needs.version.outputs.has_changesets }}
         run: |
-          if [ "${{ needs.version.outputs.has_changesets }}" != "true" ]; then
+          if [ "$HAS_CHANGESETS" != "true" ]; then
             printf -- '---\n"@auditstream/node": patch\n---\n\nSnapshot release.\n' > .changeset/snapshot-release.md
           fi
           pnpm changeset version --snapshot snapshot
