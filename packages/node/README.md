@@ -1,8 +1,13 @@
 # @auditstream/node
 
-Actor context propagation, application event logging, history helpers, and web framework integrations for [Auditstream](https://github.com/auditstream/auditstream).
+[![npm version][npm-badge]][npm-url]
+[![CI][ci-badge]][ci-url]
+[![SonarCloud Quality Gate][sonar-badge]][sonar-url]
+[![OpenSSF Scorecard][scorecard-badge]][scorecard-url]
 
-`@auditstream/node` tracks who initiated each request with `AsyncLocalStorage`. ORM adapters read that scope and pass it to PostgreSQL triggers.
+Actor context propagation, application event logging, history helpers, and web framework integrations for [Auditstream](https://auditstream.dev).
+
+`@auditstream/node` tracks who initiated each request with `AsyncLocalStorage`. ORM adapters read that scope and attach it to outgoing SQL so PostgreSQL capture triggers record who acted — including delegated AI agents (`onBehalfOf`). Full guides and API reference live at **[auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters)**.
 
 ## Install
 
@@ -10,339 +15,179 @@ Actor context propagation, application event logging, history helpers, and web f
 pnpm add @auditstream/node
 ```
 
-Framework subpaths have optional peer dependencies. Install only the framework your app uses:
+Framework subpaths use optional peer dependencies — install only the framework your app uses (`express`, `hono`, or `next`).
 
-```sh
-pnpm add @auditstream/node express
-pnpm add @auditstream/node hono
-pnpm add @auditstream/node next
-```
-
-## Supported versions
-
-| Dependency | Supported in v0.1 |
-| --- | --- |
-| Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
-| PostgreSQL | `15` to `19` |
-| Prisma | `@prisma/client` `7.1` or newer within `7.x` (Prisma 6 is unsupported; Prisma 8 follows its stable release; the `prisma` CLI is never a peer) |
-| Drizzle | `0.45` and `1.x` |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
-
-`@auditstream/node` is ESM-only so every package shares one `AsyncLocalStorage` instance.
+> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the PostgreSQL audit schema and capture triggers.
 
 ## Quick start
 
-### Actor scope and current actor
+### Actor scope (`audit.as` and `audit.current`)
 
-Wrap request work in `audit.as()` and inspect the active scope with `audit.current()`.
+Wrap request or job work in `audit.as()` and inspect the active scope with `audit.current()`:
 
 ```ts
-import {
-  type Actor,
-  type ActorType,
-  type AuditAsOptions,
-  type AuditContext,
-  type AuditNamespace,
-  type AuditScope,
-  AuditstreamError,
-  type AuditstreamErrorCode,
-  audit,
-  MAX_PAYLOAD_BYTES,
-  type NestedActor,
-  PACKAGE_NAME,
-} from "@auditstream/node";
+import { audit } from "@auditstream/node";
 
-const delegate: NestedActor = { type: "user", id: "usr_42", tenant: "org_acme" };
-const actorType: ActorType = "ai_agent";
-const actor: Actor = { type: actorType, id: "billing-agent", onBehalfOf: delegate };
-const context: AuditContext = { requestId: "req_123", source: "api" };
-const options: AuditAsOptions = { context };
-const ns: AuditNamespace = audit;
-
-const result = await ns.as(
-  actor,
-  async () => {
-    const scope: AuditScope | undefined = ns.current();
-    return scope?.actor.id;
-  },
-  options,
-);
-
-const err = new AuditstreamError("INVALID_ACTOR", "actor.id is required");
-const code: AuditstreamErrorCode = err.code;
-void [result, code, MAX_PAYLOAD_BYTES, PACKAGE_NAME];
+export async function runBillingJob(): Promise<string | undefined> {
+  return await audit.as(
+    {
+      type: "ai_agent",
+      id: "billing-agent",
+      onBehalfOf: { type: "user", id: "usr_42", tenant: "org_acme" },
+    },
+    async () => audit.current()?.actor.id,
+    { context: { requestId: "req_123", source: "api" } },
+  );
+}
 ```
 
 ### Application events (`audit.log`)
 
-Record domain events that do not modify a table through `auditstream.log_event()`.
+Record domain events that do not modify a table through `auditstream.log_event()`:
 
 ```ts
-import {
-  type AuditLogEvent,
-  type AuditLogExecutor,
-  type AuditLogValues,
-  audit,
-  LOG_EVENT_SQL,
-  MAX_ACTION_LENGTH,
-} from "@auditstream/node";
+import { audit } from "@auditstream/node";
+import pg from "pg";
 
-const exec: AuditLogExecutor = async (text: string, values: AuditLogValues) => {
-  void [text, values];
-};
+const pool = new pg.Pool({ connectionString: "postgres://localhost/app" });
 
-const event: AuditLogEvent = {
-  action: "invoice.exported",
-  target: { invoice_id: 42 },
-  data: { format: "csv" },
-};
-
-await audit.as({ type: "user", id: "usr_42" }, () => audit.log(exec, event));
-void [LOG_EVENT_SQL, MAX_ACTION_LENGTH];
-```
-
-### Reading record history and export records
-
-Query a record's audit timeline with `audit.history()`, or validate JSON Lines export rows with `parseExportRecord()`.
-
-```ts
-import {
-  type ActorSource,
-  type AuditHistoryExecutor,
-  type AuditHistoryQuery,
-  type AuditHistoryQueryResult,
-  type AuditHistoryValues,
-  type AuditOp,
-  audit,
-  type DbOp,
-  DEFAULT_HISTORY_LIMIT,
-  type EventSourceKind,
-  type ExportRecord,
-  type HistoryEntry,
-  type JsonObject,
-  type JsonPrimitive,
-  type JsonValue,
-  MAX_HISTORY_LIMIT,
-  parseExportRecord,
-  SUPPORTED_SCHEMA_VERSION,
-} from "@auditstream/node";
-
-const exec: AuditHistoryExecutor = async (
-  _text: string,
-  _values: AuditHistoryValues,
-): Promise<AuditHistoryQueryResult> => ({ rows: [] });
-
-const recordId: JsonObject = { id: 42 };
-const query: AuditHistoryQuery = {
-  table: "invoice",
-  recordId,
-  limit: DEFAULT_HISTORY_LIMIT,
-};
-
-const entries: HistoryEntry[] = await audit.history(exec, query);
-const exported: ExportRecord = parseExportRecord(
-  JSON.stringify({
-    event_id: "01955f2e-7b2a-7c10-9a11-111111111111",
-    occurred_at: "2026-11-24T12:00:00.000000Z",
-    source: "db" satisfies EventSourceKind,
-    schema_name: "public",
-    table_name: "invoice",
-    op: "UPDATE" satisfies DbOp satisfies AuditOp,
-    record_id: recordId,
-    before: { status: "open" },
-    after: { status: "paid" },
-    changed: ["status"],
-    actor: { type: "user", id: "usr_42" },
-    context: null,
-    actor_source: "comment" satisfies ActorSource,
-    db_user: "app_user",
-    schema_version: SUPPORTED_SCHEMA_VERSION,
+await audit.as({ type: "user", id: "usr_42" }, () =>
+  audit.log((sql, values) => pool.query(sql, values), {
+    action: "invoice.exported",
+    target: { invoice_id: 42 },
+    data: { format: "csv" },
   }),
 );
-
-const prim: JsonPrimitive = "ok";
-const val: JsonValue = [prim, recordId];
-void [entries, exported, val, MAX_HISTORY_LIMIT];
 ```
 
-### Querying history and application events (`audit.query`)
+### Record history and activity queries (`audit.history`, `audit.query`)
 
-Use `audit.query()` for filtered, keyset-paginated queries across both database trigger rows (`source: "db"`) and application events written by `audit.log()` (`source: "app"`, where `table_name` is `null`).
+Read one record's timeline with `audit.history()`, or run filtered, keyset-paginated queries across database trigger rows (`source: "db"`) and application events (`source: "app"`) with `audit.query()`. Export parsing (`parseExportRecord()`) and transport codecs (`encodeScope()`, `decodeScope()`, `tagSql()`, `isTagged()`, `setConfigValue()`) are documented at [auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters).
 
-> **Backend-only API:** `audit.query()` returns raw `HistoryEntry` rows including internal database metadata (`db_user`, `xact_id`, `table_oid`, `actor_source`) and raw `before`/`after` payloads. Always enforce authentication and tenant authorization on the server, and project each entry to an allowlisted client DTO before sending data to browsers. Note that `actor.tenant` is self-asserted actor metadata (absent when `actor` is `null`, `invalid`, or `jwt`); do not treat it as a replacement for row-level security. For high-QPS tenant feeds, add the opt-in partial expression indexes documented in [Opt-in tenant indexes](https://github.com/auditstream/auditstream/blob/main/docs/reference/cli/history.md#opt-in-tenant-indexes).
-
-```ts
-import {
-  type AuditQuery,
-  type AuditQueryExecutor,
-  type AuditQueryPage,
-  type AuditQueryValues,
-  audit,
-  MAX_QUERY_OPS,
-} from "@auditstream/node";
-
-const exec: AuditQueryExecutor = async (_text: string, _values: AuditQueryValues) => ({
-  rows: [],
-});
-
-const query: AuditQuery = {
-  tenant: "org_acme",
-  source: "app",
-  opPrefix: "invoice.",
-  since: "2026-11-01T00:00:00Z",
-  limit: 25,
-};
-
-const page: AuditQueryPage = await audit.query(exec, query);
-void [page.entries, page.nextCursor, page.hasMore, MAX_QUERY_OPS];
-```
-
-### Transport codec helpers
-
-ORM adapters use `encodeScope()`, `decodeScope()`, `isTagged()`, `tagSql()`, and `setConfigValue()` directly.
+> **Backend-only API:** `audit.query()` returns raw `HistoryEntry` rows with internal database metadata and raw `before`/`after` snapshots. Enforce authentication and tenant authorization on the server, and project each entry to an allowlisted client DTO before sending data to browsers. For high-QPS tenant feeds, add the [opt-in tenant indexes](https://github.com/auditstream/auditstream/blob/main/docs/reference/cli/history.md#opt-in-tenant-indexes).
 
 ```ts
-import {
-  type AuditScope,
-  type DecodedTransport,
-  decodeScope,
-  encodeScope,
-  isTagged,
-  MAX_ENCODED_COMMENT_CHARS,
-  setConfigValue,
-  tagSql,
-} from "@auditstream/node";
+import { audit } from "@auditstream/node";
+import pg from "pg";
 
-const scope: AuditScope = { actor: { type: "user", id: "usr_42" } };
-const encoded: string = encodeScope(scope);
-const tagged: string = tagSql("UPDATE invoice SET status = 'paid' WHERE id = 1", scope);
-const alreadyTagged: boolean = isTagged(tagged);
-const decoded: DecodedTransport = decodeScope(tagged);
-const settingJson: string = setConfigValue(scope);
+const pool = new pg.Pool({ connectionString: "postgres://localhost/app" });
 
-void [encoded, alreadyTagged, decoded, settingJson, MAX_ENCODED_COMMENT_CHARS];
+export async function loadInvoiceActivity() {
+  const history = await audit.history((sql, values) => pool.query(sql, values), {
+    table: "invoice",
+    recordId: { id: 42 },
+  });
+  const page = await audit.query((sql, values) => pool.query(sql, values), {
+    tenant: "org_acme",
+    source: "app",
+    opPrefix: "invoice.",
+    since: "2026-11-01T00:00:00Z",
+    limit: 25,
+  });
+  return { history, page };
+}
 ```
 
 ### Framework integrations
 
-> **Security:** Always resolve `actor.id` and `actor.tenant` from a verified session, signed cookie, or validated JWT — never directly from unverified client headers such as `x-user-id`. If a reverse proxy or Next.js `proxy` forwards identity in a request header, it must strip or overwrite that header on every incoming request to prevent actor spoofing.
+> **Security:** Always resolve `actor.id` and `actor.tenant` from a verified session, signed cookie, or validated JWT — never directly from unverified client headers. If a reverse proxy or Next.js `proxy` forwards identity in a header, it must strip or overwrite that header on every incoming request.
 
-#### Express middleware (`@auditstream/node/express`)
+#### Express (`@auditstream/node/express`)
 
 ```ts
-import {
-  auditstream,
-  type ExpressAuditOptions,
-} from "@auditstream/node/express";
+import { auditstream } from "@auditstream/node/express";
 import express, { type Request } from "express";
 
-interface AuthenticatedRequest extends Request {
+interface AuthedRequest extends Request {
   user?: { id: string; tenantId?: string };
 }
 
-const options: ExpressAuditOptions = {
-  actor: (req) => {
-    const user = (req as AuthenticatedRequest).user;
-    if (!user) return undefined;
-    return user.tenantId
-      ? { type: "user", id: user.id, tenant: user.tenantId }
-      : { type: "user", id: user.id };
-  },
-  context: (req) => ({ requestId: req.header("x-request-id") ?? "req_unknown" }),
-};
-
 const app = express();
-// Mount after your authentication middleware populates `req.user` from a verified session or JWT.
-app.use(auditstream(options));
+// Mount after authentication middleware populates `req.user` from a verified session or JWT.
+app.use(
+  auditstream({
+    actor: (req) => {
+      const user = (req as AuthedRequest).user;
+      return user ? { type: "user", id: user.id, ...(user.tenantId ? { tenant: user.tenantId } : {}) } : undefined;
+    },
+    context: (req) => ({ requestId: req.header("x-request-id") ?? "req_unknown" }),
+  }),
+);
 ```
 
-#### Hono middleware (`@auditstream/node/hono`)
+#### Hono (`@auditstream/node/hono`)
 
 ```ts
-import {
-  auditstream,
-  type HonoAuditOptions,
-} from "@auditstream/node/hono";
+import { auditstream } from "@auditstream/node/hono";
 import { Hono } from "hono";
 
-declare function verifySession(
-  authorization: string | undefined,
-): Promise<{ id: string; tenantId?: string } | null>;
-
-const options: HonoAuditOptions = {
-  actor: async (c) => {
-    const session = await verifySession(c.req.header("authorization"));
-    if (!session) return undefined;
-    return session.tenantId
-      ? { type: "user", id: session.id, tenant: session.tenantId }
-      : { type: "user", id: session.id };
-  },
-};
+declare function verifySession(auth: string | undefined): Promise<{ id: string; tenantId?: string } | null>;
 
 const app = new Hono();
-app.use("*", auditstream(options));
+app.use(
+  "*",
+  auditstream({
+    actor: async (c) => {
+      const s = await verifySession(c.req.header("authorization"));
+      return s ? { type: "user", id: s.id, ...(s.tenantId ? { tenant: s.tenantId } : {}) } : undefined;
+    },
+  }),
+);
 ```
 
 #### Next.js Route Handlers and Server Actions (`@auditstream/node/next`)
 
 ```ts
-import {
-  auditAction,
-  type NextActionAuditOptions,
-  type NextAuditOptions,
-  withAudit,
-} from "@auditstream/node/next";
+import { auditAction, withAudit } from "@auditstream/node/next";
 
-declare function getVerifiedSession(
-  request?: Request,
-): Promise<{ userId: string; tenantId?: string } | null>;
+declare function getVerifiedSession(req?: Request): Promise<{ userId: string; tenantId?: string } | null>;
 
-const routeOptions: NextAuditOptions = {
-  actor: async (request) => {
-    const session = await getVerifiedSession(request);
-    if (!session) return undefined;
-    return session.tenantId
-      ? { type: "user", id: session.userId, tenant: session.tenantId }
-      : { type: "user", id: session.userId };
+export const POST = withAudit(async (_req: Request) => new Response("ok"), {
+  actor: async (req) => {
+    const s = await getVerifiedSession(req);
+    return s ? { type: "user", id: s.userId, ...(s.tenantId ? { tenant: s.tenantId } : {}) } : undefined;
   },
-};
+});
 
-export const POST = withAudit(async (_request: Request) => new Response("ok"), routeOptions);
-
-const actionOptions: NextActionAuditOptions<[invoiceId: number]> = {
+export const approveInvoice = auditAction(async (invoiceId: number) => invoiceId, {
   actor: async () => {
-    const session = await getVerifiedSession();
-    return session ? { type: "user", id: session.userId } : undefined;
+    const s = await getVerifiedSession();
+    return s ? { type: "user", id: s.userId } : undefined;
   },
-};
-
-export const approveInvoice = auditAction(async (invoiceId: number) => invoiceId, actionOptions);
+});
 ```
+
+## Supported versions
+
+| Dependency | Supported versions |
+| --- | --- |
+| Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
+| PostgreSQL | `15` to `19` |
+| Prisma | `@prisma/client` `7.1` or newer within `7.x` (via `@auditstream/prisma`) |
+| Drizzle | `0.45` and `1.x` (via `@auditstream/drizzle`) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+
+`@auditstream/node` is ESM-only and uses `AsyncLocalStorage.run()` exclusively so all adapters share one scope.
 
 ## Context and limits
 
-```mermaid
-flowchart LR
-  Request["HTTP request or job"] --> Scope["audit.as() AsyncLocalStorage"]
-  Scope --> Adapter["ORM or driver adapter"]
-  Adapter --> Transport["Trailing comment or set_config"]
-  Transport --> Trigger["PostgreSQL capture trigger"]
-  Trigger --> History["auditstream.changes row"]
-```
-
-Where context propagation stops:
-
-- **Unawaited lazy queries:** Returning a lazy query without awaiting it exits the scope early. `audit.as()` awaits its callback inside the scope to prevent this.
-- **Next.js `proxy`:** `proxy` cannot carry `AsyncLocalStorage` into Route Handlers or Server Actions. Pass identity via headers, cookies, rewrites, redirects, or URLs, and wrap handlers with `withAudit()` or `auditAction()`.
-- **Background jobs:** Work outside a request has no ambient scope. Open a fresh `audit.as()` scope with a `service` or `system` actor.
-- **Prisma Accelerate:** SQL comment plugins do not see queries under Accelerate. Wrap writes in `auditTransaction()` from `@auditstream/prisma`.
-- **AWS RDS Proxy:** Trailing SQL comments are the default transport because `set_config(..., true)` pins server sessions on RDS Proxy.
-- **Cloudflare Workers:** Enable the `nodejs_als` flag, or use a compatibility date of `2026-08-04` or later. `@auditstream/node` uses `AsyncLocalStorage.run()` only.
+- **Unawaited lazy queries:** Always await ORM queries inside `audit.as()`, which awaits its callback before exiting the scope.
+- **Next.js `proxy`:** `proxy` cannot carry `AsyncLocalStorage` into Route Handlers or Server Actions; wrap handlers with `withAudit()` or `auditAction()`.
+- **Background jobs:** Work outside a request has no ambient scope; open a fresh `audit.as()` scope with a `service` or `system` actor.
+- **AWS RDS Proxy & Prisma Accelerate:** Trailing SQL comments are the default because `set_config(..., true)` pins RDS Proxy sessions. Use `auditTransaction()` from `@auditstream/prisma` under Prisma Accelerate.
 
 ## Links
 
-- [Auditstream engine repository](https://github.com/auditstream/auditstream)
-- [Engineering handbook](https://github.com/auditstream/auditstream/tree/main/docs/handbook)
-- [Adapters design](https://github.com/auditstream/auditstream/blob/main/docs/handbook/adapters.md)
-- [Transport specification](https://github.com/auditstream/auditstream/blob/main/spec/transport.md)
-- [Supported versions](https://github.com/auditstream/auditstream/blob/main/docs/handbook/releases.md#supported-versions)
+- [Documentation (auditstream.dev)](https://auditstream.dev/docs/adapters)
+- [Monorepo (auditstream-js)](https://github.com/auditstream/auditstream-js)
+- [Rust Engine & CLI](https://github.com/auditstream/auditstream)
+- [Security policy](https://github.com/auditstream/auditstream-js/security/policy)
+
+[npm-badge]: https://img.shields.io/npm/v/%40auditstream%2Fnode?style=flat&label=%40auditstream%2Fnode
+[npm-url]: https://www.npmjs.com/package/@auditstream/node
+[ci-badge]: https://img.shields.io/github/actions/workflow/status/auditstream/auditstream-js/ci.yml?branch=main&style=flat&label=CI
+[ci-url]: https://github.com/auditstream/auditstream-js/actions/workflows/ci.yml
+[sonar-badge]: https://img.shields.io/sonar/quality_gate/auditstream_auditstream-js?server=https%3A%2F%2Fsonarcloud.io&style=flat&label=SonarCloud
+[sonar-url]: https://sonarcloud.io/project/overview?id=auditstream_auditstream-js
+[scorecard-badge]: https://img.shields.io/ossf-scorecard/github.com/auditstream/auditstream-js?style=flat&label=OpenSSF%20Scorecard
+[scorecard-url]: https://scorecard.dev/viewer/?uri=github.com/auditstream/auditstream-js

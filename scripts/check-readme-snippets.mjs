@@ -58,6 +58,64 @@ function extractTsSnippets(markdown) {
 }
 
 /**
+ * Rewrites Drizzle 1.x `.comment()` README snippets from user-facing `"drizzle-orm"` imports
+ * to the workspace's `"drizzle-orm-v1"` alias so published READMEs stay copy-pasteable while
+ * CI type-checks them against Drizzle 1.x.
+ * @param {string} pkg
+ * @param {string} code
+ * @returns {string}
+ */
+function prepareSnippetCode(pkg, code) {
+  if (pkg === "drizzle" && (code.includes("auditComment") || code.includes(".comment("))) {
+    return code.replaceAll(
+      /(from\s+["'])drizzle-orm(\/[^"']*)?(["'])/g,
+      (_match, prefix, subpath = "", quote) => `${prefix}drizzle-orm-v1${subpath}${quote}`,
+    );
+  }
+  return code;
+}
+
+/**
+ * Writes a minimal Prisma 7 generated client declaration into the scratch directory so
+ * `packages/prisma/README.md` can show idiomatic `./generated/prisma/client.js` usage while
+ * verifying `auditstream()` against `@prisma/sqlcommenter` and `auditTransaction()` against
+ * `@auditstream/prisma`.
+ * @param {string} scratchDir
+ */
+function writePrismaClientStub(scratchDir) {
+  const generatedDir = join(scratchDir, "generated", "prisma");
+  mkdirSync(generatedDir, { recursive: true });
+  writeFileSync(
+    join(generatedDir, "client.d.ts"),
+    [
+      'import type { PrismaPg } from "@prisma/adapter-pg";',
+      'import type { SqlCommenterPlugin } from "@prisma/sqlcommenter";',
+      "",
+      "export interface PrismaTxClient {",
+      "  $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<number>;",
+      "  invoice: {",
+      "    update(args: { where: { id: number }; data: { status: string } }): Promise<unknown>;",
+      "  };",
+      "}",
+      "",
+      "export declare class PrismaClient {",
+      "  constructor(options?: {",
+      "    adapter?: PrismaPg;",
+      "    comments?: SqlCommenterPlugin[];",
+      "  });",
+      '  invoice: PrismaTxClient["invoice"];',
+      "  $transaction<T>(",
+      "    fn: (tx: PrismaTxClient) => Promise<T>,",
+      "    options?: { maxWait?: number; timeout?: number },",
+      "  ): Promise<T>;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+/**
  * Builds TypeScript `paths` mapping all workspace packages to their built `.d.mts` outputs.
  * @param {string} scratchDir
  */
@@ -115,12 +173,16 @@ for (const pkg of PACKAGE_DIRS) {
   mkdirSync(scratchDir, { recursive: true });
 
   try {
+    if (pkg === "prisma") {
+      writePrismaClientStub(scratchDir);
+    }
+
     const files = [];
     for (const snippet of snippets) {
       const fileName = `snippet_${String(snippet.index).padStart(2, "0")}_line_${snippet.line}.ts`;
       const filePath = join(scratchDir, fileName);
       // Ensure every snippet is treated as an isolated ES module (supports top-level await).
-      const content = `${snippet.code}\nexport {};\n`;
+      const content = `${prepareSnippetCode(pkg, snippet.code)}\nexport {};\n`;
       writeFileSync(filePath, content, "utf8");
       files.push(filePath);
     }

@@ -94,6 +94,11 @@ curl -s -X POST http://127.0.0.1:3000/api/invoices/1/approve \
   -H 'x-demo-user: carol' \
   -d '{"status":"approved"}'
 
+# Create an unscoped invoice (no x-demo-user header -> actor is NULL)
+curl -s -X POST http://127.0.0.1:3000/api/invoices \
+  -H 'content-type: application/json' \
+  -d '{"status":"system","total":"10.00"}'
+
 # Record an application-level audit event via audit.log() (source = 'app')
 curl -s -X POST http://127.0.0.1:3000/api/invoices/1/export \
   -H 'content-type: application/json' \
@@ -105,11 +110,6 @@ curl -s 'http://127.0.0.1:3000/api/activity?limit=10'
 
 # Filter to application events with opPrefix
 curl -s 'http://127.0.0.1:3000/api/activity?source=app&opPrefix=invoice.'
-
-# Create an unscoped invoice (no x-demo-user header -> actor is NULL)
-curl -s -X POST http://127.0.0.1:3000/api/invoices \
-  -H 'content-type: application/json' \
-  -d '{"status":"system","total":"10.00"}'
 ```
 
 You can also open `http://127.0.0.1:3000/` to submit the `auditAction` Server Action form, or open `http://127.0.0.1:3000/activity` to browse and paginate the Activity Feed.
@@ -128,7 +128,7 @@ Run this `psql` query to inspect `auditstream.changes`:
 
 ```bash
 psql "$DATABASE_URL" -c "
-  SELECT id, table_name, op, record_id, actor->>'id' AS actor_id, actor_source
+  SELECT id, source, table_name, op, record_id, actor->>'id' AS actor_id, actor_source
   FROM auditstream.changes
   ORDER BY id ASC;
 "
@@ -137,11 +137,12 @@ psql "$DATABASE_URL" -c "
 Expected output after the `curl` commands above:
 
 ```text
- id | table_name |   op   | record_id | actor_id | actor_source
-----+------------+--------+-----------+----------+--------------
-  1 | invoice    | INSERT | {"id": 1} | alice    | comment
-  2 | invoice    | UPDATE | {"id": 1} | bob      | comment
-  3 | invoice    | UPDATE | {"id": 1} | carol    | set_config
-  4 | invoice    | INSERT | {"id": 2} |          |
-(4 rows)
+ id | source | table_name |        op        | record_id | actor_id | actor_source
+----+--------+------------+------------------+-----------+----------+--------------
+  1 | db     | invoice    | INSERT           | {"id": 1} | alice    | comment
+  2 | db     | invoice    | UPDATE           | {"id": 1} | bob      | comment
+  3 | db     | invoice    | UPDATE           | {"id": 1} | carol    | set_config
+  4 | db     | invoice    | INSERT           | {"id": 2} |          |
+  5 | app    |            | invoice.exported | {"id": 1} | carol    | set_config
+(5 rows)
 ```
