@@ -5,7 +5,24 @@
 ```ts
 
 // @public
+export function auditstream(): SqlCommenterPlugin;
+
+// @public
 export const PACKAGE_NAME: "@auditstream/prisma";
+
+// @public
+export interface SqlCommenterContext {
+    readonly query?: unknown;
+    readonly sql?: string;
+}
+
+// @public
+export type SqlCommenterPlugin = (context?: SqlCommenterContext) => SqlCommenterTags;
+
+// @public
+export type SqlCommenterTags = {
+    readonly [key: string]: string | undefined;
+};
 
 // (No @packageDocumentation comment for this package)
 

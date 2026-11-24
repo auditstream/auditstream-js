@@ -159,3 +159,6 @@ vite.config.ts.timestamp-*
 # Local pack verification
 .pack/
 
+# Generated Prisma test client
+packages/prisma/test/integration/generated/
+

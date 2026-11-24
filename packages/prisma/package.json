@@ -28,7 +28,8 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config ../../vitest.config.ts"
+    "test": "vitest run --config ../../vitest.config.ts",
+    "test:integration": "prisma generate --config test/integration/prisma.config.ts && vitest run --config vitest.integration.config.ts"
   },
   "peerDependencies": {
     "@auditstream/node": ">=0.1.0 <1.0.0",
@@ -36,8 +37,16 @@
   },
   "devDependencies": {
     "@auditstream/node": "workspace:*",
+    "@auditstream/test-utils": "workspace:*",
+    "@neondatabase/serverless": "catalog:",
+    "@prisma/adapter-neon": "catalog:",
+    "@prisma/adapter-pg": "catalog:",
     "@prisma/client": "catalog:",
+    "@prisma/sqlcommenter": "catalog:",
     "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "pg": "catalog:",
+    "prisma": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

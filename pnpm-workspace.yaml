@@ -5,7 +5,9 @@ packages:
 autoInstallPeers: false
 minimumReleaseAge: 1440
 allowBuilds:
+  "@prisma/engines": false
   "cpu-features": false
+  "prisma": false
   "protobufjs": false
   "ssh2": false
 
