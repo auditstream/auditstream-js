@@ -5,7 +5,16 @@
 ```ts
 
 // @public
+export function auditComment(extra?: Readonly<SqlCommenterValues>): SqlCommenterValues;
+
+// @public
 export const PACKAGE_NAME: "@auditstream/drizzle";
+
+// @public
+export type SqlCommenterValue = string | number | bigint | boolean | null | undefined;
+
+// @public
+export type SqlCommenterValues = Record<string, SqlCommenterValue>;
 
 // (No @packageDocumentation comment for this package)
 
