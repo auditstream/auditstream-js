@@ -26,6 +26,9 @@ export const APP_PASSWORD: string = "auditstream_app_pw";
 
 const DEFAULT_PG_IMAGE = "postgres:16-alpine";
 const DEFAULT_PGBOUNCER_IMAGE = "edoburu/pgbouncer:v1.26.1-p0";
+// Cluster-wide advisory lock serializing role DDL and `template1` cloning when
+// multiple test workers share an external Postgres via `TEST_DATABASE_URL`.
+const CLUSTER_INIT_LOCK_KEY = 7842109356123;
 
 /** Connection URLs and cleanup handle for an isolated per-test Postgres database. */
 export interface TestDatabase {
@@ -129,8 +132,13 @@ async function initCluster(): Promise<ClusterState> {
   });
   await adminClient.connect();
   try {
-    await adminClient.query(buildRoleSetupSql(APP_PASSWORD));
-    await adminClient.query(`CREATE DATABASE ${quoteIdent(templateDb)}`);
+    await adminClient.query("SELECT pg_advisory_lock($1)", [CLUSTER_INIT_LOCK_KEY]);
+    try {
+      await adminClient.query(buildRoleSetupSql(APP_PASSWORD));
+      await adminClient.query(`CREATE DATABASE ${quoteIdent(templateDb)}`);
+    } finally {
+      await adminClient.query("SELECT pg_advisory_unlock($1)", [CLUSTER_INIT_LOCK_KEY]);
+    }
   } finally {
     await adminClient.end();
   }
