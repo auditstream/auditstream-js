@@ -1,6 +1,6 @@
 {
   "name": "@auditstream/drizzle",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Drizzle ORM wrappers and comment helpers for Auditstream",
   "type": "module",
   "license": "MIT",
