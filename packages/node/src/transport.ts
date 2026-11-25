@@ -8,6 +8,7 @@ import {
   getCachedScopePayload,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
+  serializeScopePayload,
 } from "./context.js";
 
 /**
@@ -53,7 +54,6 @@ const AUDITSTREAM_PREFIX = "auditstream='";
 const COMMA_AUDITSTREAM_PREFIX = ",auditstream='";
 const TAIL_SLICE_CHARS = 4096;
 
-const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -366,16 +366,7 @@ function serializeCanonicalPayload(scope: AuditScope): { json: string; bytes: Ui
     }
   }
 
-  const json = JSON.stringify(ordered);
-  const bytes = utf8Encoder.encode(json);
-  if (bytes.byteLength > MAX_PAYLOAD_BYTES) {
-    throw new AuditstreamError(
-      "PAYLOAD_TOO_LARGE",
-      `serialized actor payload is ${bytes.byteLength} UTF-8 bytes, exceeding the ${MAX_PAYLOAD_BYTES}-byte limit`,
-    );
-  }
-
-  return { json, bytes };
+  return serializeScopePayload(ordered);
 }
 
 function getOrEncodeCached(cached: CachedScopePayload): string {

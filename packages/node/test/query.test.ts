@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   type AuditQuery,
   type AuditQueryExecutor,
@@ -183,6 +183,43 @@ describe("audit.query()", () => {
     expect(sql2).toContain("occurred_at <= $2::timestamptz");
     expect(sql2).toContain("(occurred_at, id) < ($2::timestamptz, $3::bigint)");
     expect(calls[1]?.values).toEqual(["app", "2026-11-24T10:15:30.123456Z", "55", 2]);
+  });
+
+  const leapDay = "2000-02-29T23:59:59.999999Z";
+
+  function cursorFor(t: string, i: string): string {
+    return Buffer.from(JSON.stringify({ v: 1, t, i })).toString("base64url");
+  }
+
+  it.each([
+    [leapDay, "-9223372036854775809"],
+    [leapDay, "9223372036854775808"],
+    [leapDay, "9".repeat(100)],
+    ["1900-02-29T00:00:00.0Z", "1"],
+    ["2026-04-31T00:00:00.0Z", "1"],
+    ["2026-13-01T00:00:00.0Z", "1"],
+    ["0000-01-01T00:00:00.0Z", "1"],
+    ["2026-01-01T24:00:00.0Z", "1"],
+    ["2026-01-01T00:60:00.0Z", "1"],
+    ["2026-01-01T00:00:61.0Z", "1"],
+  ])("rejects an invalid cursor (%s, %s) before calling the executor", async (t, i) => {
+    const exec = vi.fn(() => []);
+    await expect(
+      audit.query(exec, { cursor: cursorFor(t, i), unbounded: true }),
+    ).rejects.toMatchObject({
+      name: "AuditstreamError",
+      code: "INVALID_QUERY",
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [leapDay, "9223372036854775807"],
+    ["0001-01-01T00:00:00.1Z", "-9223372036854775808"],
+  ])("keeps valid cursor values exact (%s, %s)", async (t, i) => {
+    const exec = vi.fn(() => []);
+    await audit.query(exec, { cursor: cursorFor(t, i), unbounded: true });
+    expect(exec).toHaveBeenCalledWith(expect.any(String), [t, i, 51]);
   });
 
   it("rejects unbounded queries without explicit unbounded: true and rejects invalid filters before SQL", async () => {

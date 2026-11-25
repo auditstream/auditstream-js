@@ -21,6 +21,7 @@ interface AuditChangeRow {
   readonly status: string | null;
   readonly description: string | null;
   readonly actor_id: string | null;
+  readonly request_id: string | null;
   readonly actor_source: string | null;
 }
 
@@ -54,6 +55,7 @@ async function fetchChangesSince(admin: pg.Client, sinceId: string): Promise<Aud
             coalesce(after->>'status', before->>'status') AS status,
             coalesce(after->>'description', before->>'description') AS description,
             actor->>'id' AS actor_id,
+            context->>'requestId' AS request_id,
             actor_source
        FROM auditstream.changes
       WHERE id > $1
@@ -136,6 +138,7 @@ describe("examples/hono-drizzle smoke test", () => {
       headers: {
         "content-type": "application/json",
         "x-demo-user": "bob",
+        "x-request-id": "r".repeat(65),
       },
       body: JSON.stringify({ status: "review", total: "125.00" }),
     });
@@ -147,6 +150,7 @@ describe("examples/hono-drizzle smoke test", () => {
       headers: {
         "content-type": "application/json",
         "x-demo-user": "carol",
+        "x-request-id": "two ids",
       },
       body: JSON.stringify({
         description: "Annual subscription",
@@ -176,6 +180,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: "draft",
         description: null,
         actor_id: "alice",
+        request_id: "req-create-1",
         actor_source: "comment",
       },
       {
@@ -185,6 +190,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: "review",
         description: null,
         actor_id: "bob",
+        request_id: null,
         actor_source: "comment",
       },
       {
@@ -194,6 +200,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: "finalized",
         description: null,
         actor_id: "carol",
+        request_id: null,
         actor_source: "comment",
       },
       {
@@ -203,6 +210,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: null,
         description: "Annual subscription",
         actor_id: "carol",
+        request_id: null,
         actor_source: "comment",
       },
       {
@@ -212,6 +220,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: "finalized",
         description: null,
         actor_id: "dave",
+        request_id: null,
         actor_source: "comment",
       },
       {
@@ -221,6 +230,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: null,
         description: "Annual subscription",
         actor_id: "dave",
+        request_id: null,
         actor_source: "comment",
       },
     ]);
@@ -288,6 +298,7 @@ describe("examples/hono-drizzle smoke test", () => {
         status: "unscoped",
         description: null,
         actor_id: null,
+        request_id: null,
         actor_source: null,
       },
     ]);

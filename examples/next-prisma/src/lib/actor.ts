@@ -35,6 +35,6 @@ export function resolveDemoTenant(headers: Headers): string | undefined {
  * Resolves optional execution context from request headers.
  */
 export function resolveAuditContext(headers: Headers, source: string): AuditContext {
-  const requestId = headers.get("x-request-id")?.trim();
-  return requestId ? { requestId, source } : { source };
+  const requestId = headers.get("x-request-id");
+  return requestId && /^[A-Za-z0-9._-]{1,64}$/.test(requestId) ? { requestId, source } : { source };
 }

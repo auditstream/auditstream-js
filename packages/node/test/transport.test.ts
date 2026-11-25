@@ -185,7 +185,7 @@ describe("@auditstream/node transport codec", () => {
   });
 
   it("caches canonical payload and encoded tag per audit.as() scope via process-wide WeakMap", async () => {
-    const cacheSymbol = Symbol.for("auditstream.node.scopeCache.v1");
+    const cacheSymbol = Symbol.for("auditstream.node.scopeCache.v2");
     const scopeCache = (globalThis as Record<PropertyKey, unknown>)[cacheSymbol];
     expect(scopeCache).toBeInstanceOf(WeakMap);
 

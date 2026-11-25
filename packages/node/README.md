@@ -41,6 +41,8 @@ export async function runBillingJob(): Promise<string | undefined> {
 }
 ```
 
+Actor and context strings must contain valid Unicode and be free of NUL characters. If a field violates this rule, `audit.as()` raises `INVALID_ACTOR` or `INVALID_CONTEXT` before entering the callback.
+
 ### Application events (`audit.log`)
 
 Record domain events that do not modify a table through `auditstream.log_event()`:
@@ -110,7 +112,12 @@ app.use(
       const user = (req as AuthedRequest).user;
       return user ? { type: "user", id: user.id, ...(user.tenantId ? { tenant: user.tenantId } : {}) } : undefined;
     },
-    context: (req) => ({ requestId: req.header("x-request-id") ?? "req_unknown" }),
+    context: (req) => {
+      const requestId = req.header("x-request-id");
+      return requestId && /^[A-Za-z0-9._-]{1,64}$/.test(requestId)
+        ? { requestId }
+        : { requestId: "req_unknown" };
+    },
   }),
 );
 ```
