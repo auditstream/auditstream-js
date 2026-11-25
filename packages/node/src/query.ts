@@ -10,6 +10,7 @@ import {
   type JsonObject,
   rowToHistoryEntry,
   serializeRecordIdJson,
+  validateCalendarDate,
   validateFilterString,
   validateQueryBase,
 } from "./history.js";
@@ -161,18 +162,6 @@ function decodeCursor(raw: unknown): DecodedCursor {
   }
 
   return { occurredAt: parsed.t, id: parsed.i };
-}
-
-function validateCalendarDate(year: number, month: number, day: number): boolean {
-  // setUTCFullYear preserves years 1–99, which Date.UTC maps to 1901–1999.
-  const check = new Date(0);
-  check.setUTCFullYear(year, month - 1, day);
-  return (
-    year > 0 &&
-    check.getUTCFullYear() === year &&
-    check.getUTCMonth() === month - 1 &&
-    check.getUTCDate() === day
-  );
 }
 
 function parseTimestampBound(raw: unknown, field: string): ParsedTimestampBound {
