@@ -68,6 +68,8 @@ Read one record's timeline with `audit.history()`, or run filtered, keyset-pagin
 
 > **Backend-only API:** `audit.query()` returns raw `HistoryEntry` rows with internal database metadata and raw `before`/`after` snapshots. Enforce authentication and tenant authorization on the server, and project each entry to an allowlisted client DTO before sending data to browsers. For high-QPS tenant feeds, add the [opt-in tenant indexes](https://github.com/auditstream/auditstream/blob/main/docs/reference/cli/history.md#opt-in-tenant-indexes).
 
+Both functions raise `INVALID_QUERY` before running SQL when a filter or record ID contains NUL or an unpaired surrogate, or when a pagination cursor is malformed, so client-supplied values do not reach PostgreSQL as invalid input.
+
 ```ts
 import { audit } from "@auditstream/node";
 import pg from "pg";

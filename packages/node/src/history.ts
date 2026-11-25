@@ -1,4 +1,4 @@
-import { type Actor, type AuditContext, AuditstreamError } from "./context.js";
+import { type Actor, type AuditContext, AuditstreamError, hasInvalidText } from "./context.js";
 import { type ActorSource, isValidActorObject, isValidContextObject } from "./transport.js";
 
 /**
@@ -561,8 +561,9 @@ export function serializeRecordIdJson(raw: unknown): string {
   if (!isPlainObject(raw)) {
     throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
   }
+  let json: string;
   try {
-    return JSON.stringify(raw);
+    json = JSON.stringify(raw);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new AuditstreamError(
@@ -570,6 +571,28 @@ export function serializeRecordIdJson(raw: unknown): string {
       `query.recordId is not JSON-serializable: ${detail}`,
     );
   }
+  // JSON.stringify escapes NUL and unpaired surrogates, so only parse when an escape is present.
+  if (json.includes("\\u") && hasInvalidText(JSON.parse(json))) {
+    throw new AuditstreamError(
+      "INVALID_QUERY",
+      "query.recordId must not contain NUL or unpaired surrogates",
+    );
+  }
+  return json;
+}
+
+/** Internal validation shared by `audit.query()` filters and `audit.history()`. */
+export function validateFilterString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new AuditstreamError("INVALID_QUERY", `${field} must be a non-empty string`);
+  }
+  if (hasInvalidText(value)) {
+    throw new AuditstreamError(
+      "INVALID_QUERY",
+      `${field} must not contain NUL or unpaired surrogates`,
+    );
+  }
+  return value;
 }
 
 /** Internal shared result row extractor accepting both row arrays and `{ rows }` objects. */
@@ -597,9 +620,7 @@ export async function readHistory(
   query: AuditHistoryQuery,
 ): Promise<HistoryEntry[]> {
   const { schema, limit } = validateQueryBase(exec, query);
-  if (typeof query.table !== "string" || query.table.trim().length === 0) {
-    throw new AuditstreamError("INVALID_QUERY", "query.table must be a non-empty string");
-  }
+  const table = validateFilterString(query.table, "query.table");
   const recordIdJson = serializeRecordIdJson(query.recordId);
 
   const sql =
@@ -609,6 +630,6 @@ export async function readHistory(
     `ORDER BY occurred_at DESC, id DESC ` +
     `LIMIT $3::int`;
 
-  const result = await exec(sql, [query.table, recordIdJson, limit]);
+  const result = await exec(sql, [table, recordIdJson, limit]);
   return extractQueryRows(result).map(rowToHistoryEntry);
 }

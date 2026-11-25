@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   type ActorSource,
   type AuditHistoryValues,
@@ -451,5 +451,15 @@ describe("audit.history()", () => {
     }
 
     expect(called).toBe(false);
+  });
+
+  it.each([
+    { table: "invoice\0", recordId: { id: 1 } },
+    { table: "invoice", recordId: { id: "a\0b" } },
+    { table: "invoice", recordId: { "\ud800": 1 } },
+  ])("rejects text PostgreSQL cannot compare before sending SQL %#", async (query) => {
+    const exec = vi.fn(() => []);
+    await expect(audit.history(exec, query)).rejects.toMatchObject({ code: "INVALID_QUERY" });
+    expect(exec).not.toHaveBeenCalled();
   });
 });

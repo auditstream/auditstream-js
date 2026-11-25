@@ -222,6 +222,35 @@ describe("audit.query()", () => {
     expect(exec).toHaveBeenCalledWith(expect.any(String), [t, i, 51]);
   });
 
+  const unsupportedText: readonly AuditQuery[] = [
+    { schemaName: "public\0" },
+    { table: "invoice\0" },
+    { actor: "usr\ud800" },
+    { tenant: "org\0" },
+    { op: ["INSERT", "app.\0"] },
+    { opPrefix: "app.\udfff" },
+    { recordId: { id: "a\0b" } },
+    { recordId: { "\ud800": 1 } },
+  ];
+
+  it.each(unsupportedText)(
+    "rejects text PostgreSQL cannot compare before SQL %#",
+    async (filter) => {
+      const exec = vi.fn(() => []);
+      await expect(audit.query(exec, { ...filter, unbounded: true })).rejects.toMatchObject({
+        name: "AuditstreamError",
+        code: "INVALID_QUERY",
+      });
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes supplementary characters and literal escape text through to SQL", async () => {
+    const exec = vi.fn(() => []);
+    await audit.query(exec, { actor: "usr_📦", recordId: { id: "a\\u0000" } });
+    expect(exec).toHaveBeenCalledWith(expect.any(String), ['{"id":"a\\\\u0000"}', "usr_📦", 51]);
+  });
+
   it("rejects unbounded queries without explicit unbounded: true and rejects invalid filters before SQL", async () => {
     let called = false;
     const exec: AuditQueryExecutor = () => {

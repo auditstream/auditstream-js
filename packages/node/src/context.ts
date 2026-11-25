@@ -291,17 +291,19 @@ function validateContext(raw: unknown): AuditContext {
   return Object.freeze(context);
 }
 
-// In Unicode mode a valid surrogate pair is one code point outside this range.
-function hasInvalidJsonText(value: unknown): boolean {
+/**
+ * Internal check for text PostgreSQL cannot store or compare: NUL, or an unpaired UTF-16
+ * surrogate in a string or in any key or value of a nested object or array.
+ */
+export function hasInvalidText(value: unknown): boolean {
   if (typeof value === "string") {
+    // In Unicode mode a valid surrogate pair is one code point outside this range.
     return value.includes("\0") || /[\uD800-\uDFFF]/u.test(value);
   }
   return (
     typeof value === "object" &&
     value !== null &&
-    Object.entries(value).some(
-      ([key, child]) => hasInvalidJsonText(key) || hasInvalidJsonText(child),
-    )
+    Object.entries(value).some(([key, child]) => hasInvalidText(key) || hasInvalidText(child))
   );
 }
 
@@ -311,7 +313,7 @@ function validateSerializedText(json: string): void {
   if (!json.includes("\\u")) return;
   const fields: Record<string, unknown> = JSON.parse(json);
   for (const [key, value] of Object.entries(fields)) {
-    if (hasInvalidJsonText(key) || hasInvalidJsonText(value)) {
+    if (hasInvalidText(key) || hasInvalidText(value)) {
       const code = key === "context" ? "INVALID_CONTEXT" : "INVALID_ACTOR";
       throw new AuditstreamError(
         code,

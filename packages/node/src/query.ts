@@ -10,6 +10,7 @@ import {
   type JsonObject,
   rowToHistoryEntry,
   serializeRecordIdJson,
+  validateFilterString,
   validateQueryBase,
 } from "./history.js";
 import { decodeBase64UrlUnpadded, encodeBase64UrlUnpadded } from "./transport.js";
@@ -229,13 +230,6 @@ function parseTimestampBound(raw: unknown, field: string): ParsedTimestampBound 
     sqlValue: raw,
     epochMicros: BigInt(wholeSecMs) * 1000n + fracMicros,
   };
-}
-
-function validateFilterString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new AuditstreamError("INVALID_QUERY", `${field} must be a non-empty string`);
-  }
-  return value;
 }
 
 function validateOps(raw: unknown): readonly string[] {
