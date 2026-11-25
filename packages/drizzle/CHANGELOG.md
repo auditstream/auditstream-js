@@ -1,5 +1,12 @@
 # @auditstream/drizzle
 
+## 0.2.1
+
+### Patch Changes
+
+- 4893f97: Fix `@auditstream/drizzle` README imports (`drizzle-orm` instead of internal `drizzle-orm-v1`), polish all published package READMEs with idiomatic examples and verified badges, and add `homepage` metadata pointing to `https://auditstream.dev/docs/typescript/`.
+- 0bee515: Update package `homepage` URLs to point directly to the `/docs/typescript/` documentation routes.
+
 ## 0.2.0
 
 ### Minor Changes
