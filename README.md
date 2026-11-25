@@ -9,11 +9,11 @@
 [![Node.js >=22.12][node-badge]][node-url]
 [![MIT License][license-badge]][license-url]
 
-**[auditstream.dev](https://auditstream.dev)** · **[Adapter Docs](https://auditstream.dev/docs/adapters)** · **[Rust Engine & CLI](https://github.com/auditstream/auditstream)** · **[Benchmarks](https://auditstream.dev/docs/evidence)**
+**[auditstream.dev](https://auditstream.dev)** · **[TypeScript Docs](https://auditstream.dev/docs/typescript/)** · **[Rust Engine & CLI](https://github.com/auditstream/auditstream)** · **[Benchmarks](https://auditstream.dev/docs/evidence/)**
 
-TypeScript adapters and query helpers for [Auditstream](https://github.com/auditstream/auditstream), an open-source PostgreSQL audit trail engine.
+TypeScript adapters and query helpers for [Auditstream](https://github.com/auditstream/auditstream), an open-source database audit trail engine.
 
-Application code never writes audit rows directly. These packages propagate the active actor through `AsyncLocalStorage` and attach it to outgoing SQL queries so PostgreSQL capture triggers record who acted — including delegated AI agents (`onBehalfOf`).
+Application code never writes audit rows directly. These packages propagate the active actor through `AsyncLocalStorage` and attach it to outgoing SQL queries so database capture triggers record who acted — including delegated AI agents (`onBehalfOf`).
 
 **Status:** v0.2.0 (pre-1.0), targeting [Auditstream Specification 0.1.1 (`spec-v0.1.1`)](https://github.com/auditstream/auditstream/tree/spec-v0.1.1/spec).
 
@@ -31,7 +31,7 @@ Database migrations, capture triggers, `auditstream verify`, and `auditstream ex
 
 ## Install
 
-First install the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) (`npm i -g auditstream` or `brew install auditstream/tap/auditstream`) and run `auditstream init` to create the PostgreSQL triggers.
+First install the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) (`npm i -g auditstream` or `brew install auditstream/tap/auditstream`) and run `auditstream init` to create the database capture triggers.
 
 Then install `@auditstream/node` alongside the ORM adapter you use:
 
@@ -61,7 +61,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 );
 ```
 
-See each package's README or [auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters) for Drizzle, Express, Hono, Next.js, `audit.log()`, and `audit.query()` guides.
+See each package's README or the [TypeScript SDK docs](https://auditstream.dev/docs/typescript/) for [Prisma](https://auditstream.dev/docs/typescript/prisma/), [Drizzle](https://auditstream.dev/docs/typescript/drizzle/), [Next.js](https://auditstream.dev/docs/typescript/nextjs/), [Express & Hono](https://auditstream.dev/docs/typescript/http/), `audit.log()`, and `audit.query()` guides.
 
 ## Examples
 
@@ -75,7 +75,7 @@ Runnable end-to-end apps with real engine-generated migrations and live PostgreS
 | Dependency | Supported versions |
 | --- | --- |
 | Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
-| PostgreSQL | `15` to `19` |
+| PostgreSQL | `15` to `19` (MySQL support is planned) |
 | Prisma | `@prisma/client` `7.1` or newer within `7.x` (Prisma 6 is unsupported; Prisma 8 follows its stable release; the `prisma` CLI is never a peer dependency) |
 | Drizzle | `0.45` and `1.x` |
 | Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |

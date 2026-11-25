@@ -7,7 +7,7 @@
 
 Drizzle ORM driver wrappers and Drizzle 1.x `.comment()` helper for [Auditstream](https://auditstream.dev).
 
-`@auditstream/drizzle` forwards the active actor from `@auditstream/node` to PostgreSQL triggers across Drizzle 0.45 and 1.x. Full guides and API reference live at **[auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters)**.
+`@auditstream/drizzle` forwards the active actor from `@auditstream/node` to database capture triggers across Drizzle 0.45 and 1.x. Full guides and API reference live at **[auditstream.dev/docs/typescript/drizzle](https://auditstream.dev/docs/typescript/drizzle/)**.
 
 ## Install
 
@@ -23,7 +23,7 @@ pnpm add postgres
 pnpm add @neondatabase/serverless
 ```
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the PostgreSQL audit schema and capture triggers.
+> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
 
 ## Quick start
 
@@ -152,7 +152,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 
 ## Links
 
-- [Documentation (auditstream.dev)](https://auditstream.dev/docs/adapters)
+- [Drizzle guide (auditstream.dev)](https://auditstream.dev/docs/typescript/drizzle/)
 - [Monorepo (auditstream-js)](https://github.com/auditstream/auditstream-js)
 - [Rust Engine & CLI](https://github.com/auditstream/auditstream)
 - [Security policy](https://github.com/auditstream/auditstream-js/security/policy)

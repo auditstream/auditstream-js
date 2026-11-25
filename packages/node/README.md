@@ -7,7 +7,7 @@
 
 Actor context propagation, application event logging, history helpers, and web framework integrations for [Auditstream](https://auditstream.dev).
 
-`@auditstream/node` tracks who initiated each request with `AsyncLocalStorage`. ORM adapters read that scope and attach it to outgoing SQL so PostgreSQL capture triggers record who acted — including delegated AI agents (`onBehalfOf`). Full guides and API reference live at **[auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters)**.
+`@auditstream/node` tracks who initiated each request with `AsyncLocalStorage`. ORM adapters read that scope and attach it to outgoing SQL so database capture triggers record who acted — including delegated AI agents (`onBehalfOf`). Full guides and API reference live at **[auditstream.dev/docs/typescript](https://auditstream.dev/docs/typescript/)**.
 
 ## Install
 
@@ -17,7 +17,7 @@ pnpm add @auditstream/node
 
 Framework subpaths use optional peer dependencies — install only the framework your app uses (`express`, `hono`, or `next`).
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the PostgreSQL audit schema and capture triggers.
+> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
 
 ## Quick start
 
@@ -62,7 +62,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 
 ### Record history and activity queries (`audit.history`, `audit.query`)
 
-Read one record's timeline with `audit.history()`, or run filtered, keyset-paginated queries across database trigger rows (`source: "db"`) and application events (`source: "app"`) with `audit.query()`. Export parsing (`parseExportRecord()`) and transport codecs (`encodeScope()`, `decodeScope()`, `tagSql()`, `isTagged()`, `setConfigValue()`) are documented at [auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters).
+Read one record's timeline with `audit.history()`, or run filtered, keyset-paginated queries across database trigger rows (`source: "db"`) and application events (`source: "app"`) with `audit.query()`. Export parsing (`parseExportRecord()`) and transport codecs (`encodeScope()`, `decodeScope()`, `tagSql()`, `isTagged()`, `setConfigValue()`) are documented at [auditstream.dev/docs/typescript](https://auditstream.dev/docs/typescript/).
 
 > **Backend-only API:** `audit.query()` returns raw `HistoryEntry` rows with internal database metadata and raw `before`/`after` snapshots. Enforce authentication and tenant authorization on the server, and project each entry to an allowlisted client DTO before sending data to browsers. For high-QPS tenant feeds, add the [opt-in tenant indexes](https://github.com/auditstream/auditstream/blob/main/docs/reference/cli/history.md#opt-in-tenant-indexes).
 
@@ -178,7 +178,8 @@ export const approveInvoice = auditAction(async (invoiceId: number) => invoiceId
 
 ## Links
 
-- [Documentation (auditstream.dev)](https://auditstream.dev/docs/adapters)
+- [TypeScript SDK docs (auditstream.dev)](https://auditstream.dev/docs/typescript/)
+- [Next.js guide](https://auditstream.dev/docs/typescript/nextjs/) · [Express & Hono guide](https://auditstream.dev/docs/typescript/http/)
 - [Monorepo (auditstream-js)](https://github.com/auditstream/auditstream-js)
 - [Rust Engine & CLI](https://github.com/auditstream/auditstream)
 - [Security policy](https://github.com/auditstream/auditstream-js/security/policy)
