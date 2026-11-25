@@ -183,7 +183,8 @@ export interface AuditHistoryQuery {
 export const VALID_SCHEMA_PATTERN: RegExp = /^[a-z_][a-z0-9_]*$/;
 const UUID_PATTERN =
   /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-const RFC3339_UTC_MICROS_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const RFC3339_UTC_MICROS_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{6}Z$/;
 const VALID_ACTOR_SOURCES: ReadonlySet<string> = new Set<ActorSource>([
   "set_config",
   "comment",
@@ -217,6 +218,26 @@ type JsonParseWithContext = (
 /** Internal plain-object check shared with `query.ts`. */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Internal proleptic Gregorian calendar date check shared with `query.ts`. */
+export function validateCalendarDate(year: number, month: number, day: number): boolean {
+  // setUTCFullYear preserves years 1–99, which Date.UTC maps to 1901–1999.
+  const check = new Date(0);
+  check.setUTCFullYear(year, month - 1, day);
+  return (
+    year > 0 &&
+    check.getUTCFullYear() === year &&
+    check.getUTCMonth() === month - 1 &&
+    check.getUTCDate() === day
+  );
+}
+
+function isValidExportTimestamp(value: unknown): value is string {
+  const match = typeof value === "string" ? RFC3339_UTC_MICROS_PATTERN.exec(value) : null;
+  return (
+    match !== null && validateCalendarDate(Number(match[1]), Number(match[2]), Number(match[3]))
+  );
 }
 
 /**
@@ -390,13 +411,10 @@ export function parseExportRecord(line: string): ExportRecord {
   if (typeof parsed.event_id !== "string" || !UUID_PATTERN.test(parsed.event_id)) {
     throw new AuditstreamError("INVALID_RECORD", "event_id must be a valid UUID string");
   }
-  if (
-    typeof parsed.occurred_at !== "string" ||
-    !RFC3339_UTC_MICROS_PATTERN.test(parsed.occurred_at)
-  ) {
+  if (!isValidExportTimestamp(parsed.occurred_at)) {
     throw new AuditstreamError(
       "INVALID_RECORD",
-      "occurred_at must be an RFC 3339 UTC timestamp with 6 fractional digits",
+      "occurred_at must be a valid RFC 3339 UTC timestamp with 6 fractional digits",
     );
   }
   if (typeof parsed.source !== "string" || !VALID_SOURCES.has(parsed.source)) {

@@ -255,6 +255,46 @@ describe("parseExportRecord()", () => {
       }
     }
   });
+
+  it("validates occurred_at calendar dates and clock ranges in parseExportRecord()", () => {
+    const base = {
+      event_id: "019ab123-4567-7000-8000-000000000001",
+      source: "db",
+      op: "INSERT",
+      db_user: "app_user",
+      schema_version: 1,
+    };
+
+    const invalidTimestamps: readonly string[] = [
+      "2026-02-30T00:00:00.000000Z",
+      "1900-02-29T00:00:00.000000Z",
+      "0000-01-01T00:00:00.000000Z",
+      "2026-13-01T00:00:00.000000Z",
+      "2026-04-31T00:00:00.000000Z",
+      "2026-01-01T24:00:00.000000Z",
+      "2026-01-01T25:00:00.000000Z",
+      "2026-01-01T00:60:00.000000Z",
+      "2026-01-01T23:59:60.000000Z",
+    ];
+
+    for (const occurred_at of invalidTimestamps) {
+      expect(
+        () => parseExportRecord(JSON.stringify({ ...base, occurred_at })),
+        occurred_at,
+      ).toThrow(AuditstreamError);
+      try {
+        parseExportRecord(JSON.stringify({ ...base, occurred_at }));
+      } catch (err) {
+        expect(err).toBeInstanceOf(AuditstreamError);
+        expect((err as AuditstreamError).code).toBe("INVALID_RECORD");
+      }
+    }
+
+    for (const occurred_at of ["2000-02-29T23:59:59.999999Z", "0001-01-01T00:00:00.000000Z"]) {
+      const parsed = parseExportRecord(JSON.stringify({ ...base, occurred_at }));
+      expect(parsed.occurred_at).toBe(occurred_at);
+    }
+  });
 });
 
 describe("audit.history()", () => {
