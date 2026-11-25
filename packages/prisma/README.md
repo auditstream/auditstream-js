@@ -7,7 +7,7 @@
 
 Prisma 7 SQL comments plugin and transaction-local `set_config` fallback for [Auditstream](https://auditstream.dev).
 
-`@auditstream/prisma` reads the active actor from `@auditstream/node` and sends it to PostgreSQL triggers without altering your Prisma schema. Full guides and API reference live at **[auditstream.dev/docs/adapters](https://auditstream.dev/docs/adapters)**.
+`@auditstream/prisma` reads the active actor from `@auditstream/node` and sends it to database capture triggers without altering your Prisma schema. Full guides and API reference live at **[auditstream.dev/docs/typescript/prisma](https://auditstream.dev/docs/typescript/prisma/)**.
 
 ## Install
 
@@ -17,7 +17,7 @@ pnpm add @auditstream/prisma @auditstream/node @prisma/client
 
 Install the `prisma` CLI as a dev dependency if needed. The `prisma` CLI is never a peer dependency.
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the PostgreSQL audit schema and capture triggers.
+> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
 
 ## Quick start
 
@@ -92,7 +92,7 @@ Prisma 6 is not supported. Prisma 8 support follows its stable release. The `pri
 
 ## Links
 
-- [Documentation (auditstream.dev)](https://auditstream.dev/docs/adapters)
+- [Prisma guide (auditstream.dev)](https://auditstream.dev/docs/typescript/prisma/)
 - [Monorepo (auditstream-js)](https://github.com/auditstream/auditstream-js)
 - [Rust Engine & CLI](https://github.com/auditstream/auditstream)
 - [Security policy](https://github.com/auditstream/auditstream-js/security/policy)
