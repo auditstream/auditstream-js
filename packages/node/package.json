@@ -1,6 +1,6 @@
 {
   "name": "@auditstream/node",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Actor context propagation and event helpers for Auditstream",
   "type": "module",
   "license": "MIT",
