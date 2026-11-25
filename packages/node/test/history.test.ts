@@ -470,7 +470,7 @@ describe("audit.history()", () => {
 
     let deepInvalid: Record<string, unknown> = { leaf: "a\0b" };
     let deepValid: Record<string, unknown> = { leaf: "a\\u0000" };
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < 500; i++) {
       deepInvalid = { nested: deepInvalid };
       deepValid = { nested: deepValid };
     }

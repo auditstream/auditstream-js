@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { hasInvalidText } from "../src/context.js";
 import { type AuditScope, audit, encodeScope, setConfigValue } from "../src/index.js";
 
 const actor = { type: "user", id: "fixture" } as const;
@@ -61,5 +62,16 @@ describe("actor and context text", () => {
     const json = JSON.stringify({ ...scope.actor, context: scope.context });
     expect(setConfigValue(scope)).toBe(json);
     await audit.as(scope.actor, () => expect(audit.current()).toEqual(scope), scope);
+  });
+
+  it("checks deeply nested structures iteratively without overflowing the call stack", () => {
+    let deepInvalid: Record<string, unknown> = { leaf: "a\0b" };
+    let deepValid: Record<string, unknown> = { leaf: "a\\u0000" };
+    for (let i = 0; i < 15_000; i++) {
+      deepInvalid = { nested: deepInvalid };
+      deepValid = { nested: deepValid };
+    }
+    expect(hasInvalidText(deepInvalid)).toBe(true);
+    expect(hasInvalidText(deepValid)).toBe(false);
   });
 });
