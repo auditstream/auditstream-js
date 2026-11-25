@@ -52,8 +52,8 @@ export function createApp(db: AppDatabase): Hono {
         return { type: "user", id: userId };
       },
       context: (c) => {
-        const requestId = c.req.header("x-request-id")?.trim();
-        return requestId
+        const requestId = c.req.header("x-request-id");
+        return requestId && /^[A-Za-z0-9._-]{1,64}$/.test(requestId)
           ? { requestId, source: "examples/hono-drizzle" }
           : { source: "examples/hono-drizzle" };
       },

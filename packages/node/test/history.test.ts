@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   type ActorSource,
   type AuditHistoryValues,
@@ -451,5 +451,53 @@ describe("audit.history()", () => {
     }
 
     expect(called).toBe(false);
+  });
+
+  it.each([
+    { table: "invoice\0", recordId: { id: 1 } },
+    { table: "invoice", recordId: { id: "a\0b" } },
+    { table: "invoice", recordId: { "\ud800": 1 } },
+  ])("rejects text PostgreSQL cannot compare before sending SQL %#", async (query) => {
+    const exec = vi.fn(() => []);
+    await expect(audit.history(exec, query)).rejects.toMatchObject({ code: "INVALID_QUERY" });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-object toJSON(), circular, and deeply nested invalid recordId with INVALID_QUERY", async () => {
+    const exec = vi.fn(() => []);
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    let deepInvalid: Record<string, unknown> = { leaf: "a\0b" };
+    let deepValid: Record<string, unknown> = { leaf: "a\\u0000" };
+    for (let i = 0; i < 500; i++) {
+      deepInvalid = { nested: deepInvalid };
+      deepValid = { nested: deepValid };
+    }
+
+    const badRecordIds: readonly unknown[] = [
+      {
+        toJSON() {
+          return undefined;
+        },
+      },
+      {
+        toJSON() {
+          return "scalar";
+        },
+      },
+      circular,
+      deepInvalid,
+    ];
+
+    for (const recordId of badRecordIds) {
+      await expect(
+        audit.history(exec, { table: "invoice", recordId: recordId as { id: number } }),
+      ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_QUERY" });
+    }
+    expect(exec).not.toHaveBeenCalled();
+
+    await audit.history(exec, { table: "invoice", recordId: deepValid as { id: number } });
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 });

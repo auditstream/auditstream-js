@@ -10,6 +10,7 @@ import {
   type JsonObject,
   rowToHistoryEntry,
   serializeRecordIdJson,
+  validateFilterString,
   validateQueryBase,
 } from "./history.js";
 import { decodeBase64UrlUnpadded, encodeBase64UrlUnpadded } from "./transport.js";
@@ -95,10 +96,11 @@ export interface AuditQueryPage {
 
 const MAX_CURSOR_CHARS = 256;
 const CURSOR_VERSION = 1;
-const CURSOR_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,6}Z$/;
+const CURSOR_TIMESTAMP_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{1,6}Z$/;
 const BIGINT_DECIMAL_PATTERN = /^-?\d+$/;
 const ISO_BOUND_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2}))?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ]([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,6}))?(Z|[+-](?:0\d|1[0-5]):[0-5]\d))?$/;
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -116,6 +118,21 @@ interface ParsedTimestampBound {
 function encodeCursor(occurredAt: string, id: string): string {
   const payload = JSON.stringify({ v: CURSOR_VERSION, t: occurredAt, i: id });
   return encodeBase64UrlUnpadded(utf8Encoder.encode(payload));
+}
+
+function isCursorTimestamp(value: unknown): value is string {
+  const match = typeof value === "string" ? CURSOR_TIMESTAMP_PATTERN.exec(value) : null;
+  return (
+    match !== null && validateCalendarDate(Number(match[1]), Number(match[2]), Number(match[3]))
+  );
+}
+
+function isCursorId(value: unknown): value is string {
+  if (typeof value !== "string" || !BIGINT_DECIMAL_PATTERN.test(value)) {
+    return false;
+  }
+  const id = BigInt(value);
+  return id >= -9_223_372_036_854_775_808n && id <= 9_223_372_036_854_775_807n;
 }
 
 function decodeCursor(raw: unknown): DecodedCursor {
@@ -137,10 +154,8 @@ function decodeCursor(raw: unknown): DecodedCursor {
   if (
     !isPlainObject(parsed) ||
     parsed.v !== CURSOR_VERSION ||
-    typeof parsed.t !== "string" ||
-    !CURSOR_TIMESTAMP_PATTERN.test(parsed.t) ||
-    typeof parsed.i !== "string" ||
-    !BIGINT_DECIMAL_PATTERN.test(parsed.i)
+    !isCursorTimestamp(parsed.t) ||
+    !isCursorId(parsed.i)
   ) {
     throw new AuditstreamError("INVALID_QUERY", "query.cursor payload is invalid");
   }
@@ -149,8 +164,11 @@ function decodeCursor(raw: unknown): DecodedCursor {
 }
 
 function validateCalendarDate(year: number, month: number, day: number): boolean {
-  const check = new Date(Date.UTC(year, month - 1, day));
+  // setUTCFullYear preserves years 1–99, which Date.UTC maps to 1901–1999.
+  const check = new Date(0);
+  check.setUTCFullYear(year, month - 1, day);
   return (
+    year > 0 &&
     check.getUTCFullYear() === year &&
     check.getUTCMonth() === month - 1 &&
     check.getUTCDate() === day
@@ -162,6 +180,13 @@ function parseTimestampBound(raw: unknown, field: string): ParsedTimestampBound 
     const ms = raw.getTime();
     if (Number.isNaN(ms)) {
       throw new AuditstreamError("INVALID_QUERY", `${field} must be a valid Date`);
+    }
+    const year = raw.getUTCFullYear();
+    if (year < 1 || year > 9999) {
+      throw new AuditstreamError(
+        "INVALID_QUERY",
+        `${field} must have a UTC year between 0001 and 9999`,
+      );
     }
     return { sqlValue: raw.toISOString(), epochMicros: BigInt(ms) * 1000n };
   }
@@ -212,13 +237,6 @@ function parseTimestampBound(raw: unknown, field: string): ParsedTimestampBound 
     sqlValue: raw,
     epochMicros: BigInt(wholeSecMs) * 1000n + fracMicros,
   };
-}
-
-function validateFilterString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new AuditstreamError("INVALID_QUERY", `${field} must be a non-empty string`);
-  }
-  return value;
 }
 
 function validateOps(raw: unknown): readonly string[] {

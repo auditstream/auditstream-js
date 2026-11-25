@@ -23,6 +23,7 @@ interface AuditChangeRow {
   readonly pk: number;
   readonly status: string | null;
   readonly actor_id: string | null;
+  readonly request_id: string | null;
   readonly actor_source: string | null;
 }
 
@@ -81,6 +82,7 @@ async function fetchChangesSince(admin: pg.Client, sinceId: string): Promise<Aud
             (record_id->>'id')::int AS pk,
             coalesce(after->>'status', before->>'status') AS status,
             actor->>'id' AS actor_id,
+            context->>'requestId' AS request_id,
             actor_source
        FROM auditstream.changes
       WHERE id > $1
@@ -190,6 +192,7 @@ describe("examples/next-prisma smoke test", () => {
       headers: {
         "content-type": "application/json",
         "x-demo-user": "bob",
+        "x-request-id": "r".repeat(65),
       },
       body: JSON.stringify({ status: "review", total: "125.00" }),
     });
@@ -201,6 +204,7 @@ describe("examples/next-prisma smoke test", () => {
       headers: {
         "content-type": "application/json",
         "x-demo-user": "carol",
+        "x-request-id": "two ids",
       },
       body: JSON.stringify({ status: "approved" }),
     });
@@ -246,6 +250,7 @@ describe("examples/next-prisma smoke test", () => {
         pk: created.id,
         status: "draft",
         actor_id: "alice",
+        request_id: "req-next-1",
         actor_source: "comment",
       },
       {
@@ -254,6 +259,7 @@ describe("examples/next-prisma smoke test", () => {
         pk: created.id,
         status: "review",
         actor_id: "bob",
+        request_id: null,
         actor_source: "comment",
       },
       {
@@ -262,6 +268,7 @@ describe("examples/next-prisma smoke test", () => {
         pk: created.id,
         status: "approved",
         actor_id: "carol",
+        request_id: null,
         actor_source: "set_config",
       },
       {
@@ -270,6 +277,7 @@ describe("examples/next-prisma smoke test", () => {
         pk: created.id,
         status: "sent-via-action",
         actor_id: "dave-action",
+        request_id: null,
         actor_source: "comment",
       },
       {
@@ -278,6 +286,7 @@ describe("examples/next-prisma smoke test", () => {
         pk: unscoped.id,
         status: "unscoped",
         actor_id: null,
+        request_id: null,
         actor_source: null,
       },
     ]);

@@ -117,6 +117,21 @@ describe("audit.log()", () => {
     expect(exec).toHaveBeenCalledWith(LOG_EVENT_SQL, [sixtyFourEmoji, null, null]);
   });
 
+  it("allows valid supplementary Unicode and literal \\u escape text in action, target, and data", async () => {
+    const exec = vi.fn<AuditLogExecutor>().mockResolvedValue(undefined);
+    await audit.log(exec, {
+      action: "invoice.📦",
+      target: { id: "a\\u0000" },
+      data: { label: "🚀\\ud800" },
+    });
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith(LOG_EVENT_SQL, [
+      "invoice.📦",
+      '{"id":"a\\\\u0000"}',
+      '{"label":"🚀\\\\ud800"}',
+    ]);
+  });
+
   it("rejects spec-invalid inputs with AuditstreamError before calling exec", async () => {
     const exec = vi.fn<AuditLogExecutor>();
     const circular: Record<string, unknown> = {};
@@ -149,6 +164,27 @@ describe("audit.log()", () => {
           data: {
             toJSON() {
               return "scalar";
+            },
+          },
+        },
+      ],
+      ["NUL in action", { action: "invoice.\0sent" }],
+      ["unpaired high surrogate in action", { action: "invoice.\ud800" }],
+      ["unpaired low surrogate in action", { action: "invoice.\udfff" }],
+      ["NUL in target value", { action: "invoice.sent", target: { id: "a\0b" } }],
+      ["unpaired surrogate in target key", { action: "invoice.sent", target: { "\ud800": 1 } }],
+      ["NUL in nested data value", { action: "invoice.sent", data: { nested: ["ok", "a\0b"] } }],
+      [
+        "unpaired surrogate in nested data key",
+        { action: "invoice.sent", data: { nested: { "\udfff": true } } },
+      ],
+      [
+        "NUL returned by data.toJSON()",
+        {
+          action: "invoice.sent",
+          data: {
+            toJSON() {
+              return { note: "bad\0" };
             },
           },
         },

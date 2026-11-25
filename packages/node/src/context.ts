@@ -129,7 +129,8 @@ const textEncoder = new TextEncoder();
 // multi-chunk server bundles (for example Next.js Turbopack Route Handlers and Server
 // Actions sharing a globalThis Prisma client) always observe the same active actor scope.
 const SCOPE_STORAGE_SYMBOL: unique symbol = Symbol.for("auditstream.node.scopeStorage.v1") as never;
-const SCOPE_CACHE_SYMBOL: unique symbol = Symbol.for("auditstream.node.scopeCache.v1") as never;
+// Older caches may contain text that the current serializer rejects.
+const SCOPE_CACHE_SYMBOL: unique symbol = Symbol.for("auditstream.node.scopeCache.v2") as never;
 
 /**
  * Internal cached canonical serialization and lazy encoded tag for an immutable `audit.as()` scope.
@@ -290,14 +291,71 @@ function validateContext(raw: unknown): AuditContext {
   return Object.freeze(context);
 }
 
-function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope {
-  const actor = validateActor(rawActor);
-  const context = rawContext === undefined ? undefined : validateContext(rawContext);
+function isInvalidTextString(value: string): boolean {
+  // In Unicode mode a valid surrogate pair is one code point outside this range.
+  return value.includes("\0") || /[\uD800-\uDFFF]/u.test(value);
+}
 
-  const payload = context === undefined ? actor : { ...actor, context };
-  const serialized = JSON.stringify(payload);
-  const bytes = textEncoder.encode(serialized);
+/**
+ * Internal check for text PostgreSQL cannot store or compare: NUL, or an unpaired UTF-16
+ * surrogate in a string or in any key or value of a nested object or array.
+ */
+export function hasInvalidText(value: unknown): boolean {
+  if (typeof value === "string") {
+    return isInvalidTextString(value);
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
 
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === "string") {
+      if (isInvalidTextString(current)) {
+        return true;
+      }
+      continue;
+    }
+    if (typeof current !== "object" || current === null) {
+      continue;
+    }
+    if (Array.isArray(current)) {
+      for (let i = 0; i < current.length; i++) {
+        stack.push(current[i]);
+      }
+      continue;
+    }
+    for (const [key, child] of Object.entries(current)) {
+      if (isInvalidTextString(key)) {
+        return true;
+      }
+      stack.push(child);
+    }
+  }
+  return false;
+}
+
+function validateSerializedText(json: string): void {
+  // JSON.stringify escapes both NUL and lone surrogates. Inspect the actual wire fields,
+  // including extension keys, only when an escape could be present.
+  if (!json.includes("\\u")) return;
+  const fields: Record<string, unknown> = JSON.parse(json);
+  for (const [key, value] of Object.entries(fields)) {
+    if (hasInvalidText(key) || hasInvalidText(value)) {
+      const code = key === "context" ? "INVALID_CONTEXT" : "INVALID_ACTOR";
+      throw new AuditstreamError(
+        code,
+        "audit payload text must not contain NUL or unpaired surrogates",
+      );
+    }
+  }
+}
+
+/** Internal serialization shared by scoped and directly supplied transport payloads. */
+export function serializeScopePayload(payload: object): CachedScopePayload {
+  const json = JSON.stringify(payload);
+  const bytes = textEncoder.encode(json);
   if (bytes.byteLength > MAX_PAYLOAD_BYTES) {
     throw new AuditstreamError(
       "PAYLOAD_TOO_LARGE",
@@ -305,12 +363,23 @@ function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope
     );
   }
 
+  validateSerializedText(json);
+  return { json, bytes };
+}
+
+function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope {
+  const actor = validateActor(rawActor);
+  const context = rawContext === undefined ? undefined : validateContext(rawContext);
+
+  const payload = context === undefined ? actor : { ...actor, context };
+  const serialized = serializeScopePayload(payload);
+
   const scope: { actor: Actor; context?: AuditContext } = { actor };
   if (context !== undefined) {
     scope.context = context;
   }
   const frozenScope: AuditScope = Object.freeze(scope);
-  scopeCache.set(frozenScope, { json: serialized, bytes });
+  scopeCache.set(frozenScope, serialized);
   return frozenScope;
 }
 

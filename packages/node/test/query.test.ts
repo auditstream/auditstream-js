@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   type AuditQuery,
   type AuditQueryExecutor,
@@ -185,6 +185,73 @@ describe("audit.query()", () => {
     expect(calls[1]?.values).toEqual(["app", "2026-11-24T10:15:30.123456Z", "55", 2]);
   });
 
+  const leapDay = "2000-02-29T23:59:59.999999Z";
+
+  function cursorFor(t: string, i: string): string {
+    return Buffer.from(JSON.stringify({ v: 1, t, i })).toString("base64url");
+  }
+
+  it.each([
+    [leapDay, "-9223372036854775809"],
+    [leapDay, "9223372036854775808"],
+    [leapDay, "9".repeat(100)],
+    ["1900-02-29T00:00:00.0Z", "1"],
+    ["2026-04-31T00:00:00.0Z", "1"],
+    ["2026-13-01T00:00:00.0Z", "1"],
+    ["0000-01-01T00:00:00.0Z", "1"],
+    ["2026-01-01T24:00:00.0Z", "1"],
+    ["2026-01-01T00:60:00.0Z", "1"],
+    ["2026-01-01T23:59:60.0Z", "1"],
+    ["2026-01-01T00:00:61.0Z", "1"],
+  ])("rejects an invalid cursor (%s, %s) before calling the executor", async (t, i) => {
+    const exec = vi.fn(() => []);
+    await expect(
+      audit.query(exec, { cursor: cursorFor(t, i), unbounded: true }),
+    ).rejects.toMatchObject({
+      name: "AuditstreamError",
+      code: "INVALID_QUERY",
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [leapDay, "9223372036854775807"],
+    ["0001-01-01T00:00:00.1Z", "-9223372036854775808"],
+  ])("keeps valid cursor values exact (%s, %s)", async (t, i) => {
+    const exec = vi.fn(() => []);
+    await audit.query(exec, { cursor: cursorFor(t, i), unbounded: true });
+    expect(exec).toHaveBeenCalledWith(expect.any(String), [t, i, 51]);
+  });
+
+  const unsupportedText: readonly AuditQuery[] = [
+    { schemaName: "public\0" },
+    { table: "invoice\0" },
+    { actor: "usr\ud800" },
+    { tenant: "org\0" },
+    { op: ["INSERT", "app.\0"] },
+    { opPrefix: "app.\udfff" },
+    { recordId: { id: "a\0b" } },
+    { recordId: { "\ud800": 1 } },
+  ];
+
+  it.each(unsupportedText)(
+    "rejects text PostgreSQL cannot compare before SQL %#",
+    async (filter) => {
+      const exec = vi.fn(() => []);
+      await expect(audit.query(exec, { ...filter, unbounded: true })).rejects.toMatchObject({
+        name: "AuditstreamError",
+        code: "INVALID_QUERY",
+      });
+      expect(exec).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes supplementary characters and literal escape text through to SQL", async () => {
+    const exec = vi.fn(() => []);
+    await audit.query(exec, { actor: "usr_📦", recordId: { id: "a\\u0000" } });
+    expect(exec).toHaveBeenCalledWith(expect.any(String), ['{"id":"a\\\\u0000"}', "usr_📦", 51]);
+  });
+
   it("rejects unbounded queries without explicit unbounded: true and rejects invalid filters before SQL", async () => {
     let called = false;
     const exec: AuditQueryExecutor = () => {
@@ -216,15 +283,40 @@ describe("audit.query()", () => {
       { since: "" },
       { since: "not-a-date" },
       { since: "2026-02-30" },
+      { since: "2026-01-01T24:00:00Z" },
+      { since: "2026-01-01T24:00:00.500000Z" },
+      { since: "2026-01-01T23:59:60Z" },
+      { since: "2026-01-01T00:00:00+16:00" },
+      { until: "2026-01-01T00:00:00-16:00" },
+      { since: "2026-01-01T00:00:00+05:60" },
+      { since: new Date("0000-01-01T00:00:00Z") },
+      { until: new Date(8640000000000000) },
       { until: new Date(Number.NaN) },
       { since: "2026-06-15T00:00:00Z", until: "2026-06-15T00:00:00Z" },
       { since: "2026-06-16T00:00:00Z", until: "2026-06-15T00:00:00Z" },
       { since: "2026-06-15T00:00:00.000005Z", until: "2026-06-15T00:00:00.000004Z" },
       { recordId: [] as unknown as { id: number } },
+      {
+        recordId: {
+          toJSON() {
+            return undefined;
+          },
+        } as unknown as { id: number },
+      },
       { unbounded: "yes" as unknown as boolean },
       { cursor: "", unbounded: true },
       { cursor: "not-valid-base64!!!", unbounded: true },
       { cursor: "e30", unbounded: true },
+      { cursor: `${cursorFor(leapDay, "1")}=`, unbounded: true },
+      { cursor: "A".repeat(257), unbounded: true },
+      {
+        cursor: Buffer.from(JSON.stringify({ v: 1, t: 123, i: "1" })).toString("base64url"),
+        unbounded: true,
+      },
+      {
+        cursor: Buffer.from(JSON.stringify({ v: 1, t: leapDay, i: 1 })).toString("base64url"),
+        unbounded: true,
+      },
     ];
 
     for (const bad of invalidQueries) {
@@ -263,5 +355,18 @@ describe("audit.query()", () => {
       "2026-06-16T00:00:00.000001Z",
       51,
     ]);
+  });
+
+  it("accepts PostgreSQL-valid timezone offsets up to +/-15:59 and Date years 0001..9999", async () => {
+    const exec = vi.fn<AuditQueryExecutor>(() => []);
+    await audit.query(exec, {
+      since: "2026-06-15T00:00:00+15:59",
+      until: "2026-06-15T00:00:00-15:59",
+    });
+    await audit.query(exec, {
+      since: new Date("0001-01-01T00:00:00.000Z"),
+      until: new Date("9999-12-31T23:59:59.999Z"),
+    });
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });

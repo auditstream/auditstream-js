@@ -41,9 +41,11 @@ export async function runBillingJob(): Promise<string | undefined> {
 }
 ```
 
+Actor and context strings must contain valid Unicode and be free of NUL characters. If a field violates this rule, `audit.as()` raises `INVALID_ACTOR` or `INVALID_CONTEXT` before entering the callback.
+
 ### Application events (`audit.log`)
 
-Record domain events that do not modify a table through `auditstream.log_event()`:
+Record domain events that do not modify a table through `auditstream.log_event()`. `audit.log()` raises `INVALID_EVENT` before running SQL if `action`, `target`, or `data` contains NUL characters or unpaired surrogates:
 
 ```ts
 import { audit } from "@auditstream/node";
@@ -65,6 +67,8 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 Read one record's timeline with `audit.history()`, or run filtered, keyset-paginated queries across database trigger rows (`source: "db"`) and application events (`source: "app"`) with `audit.query()`. Export parsing (`parseExportRecord()`) and transport codecs (`encodeScope()`, `decodeScope()`, `tagSql()`, `isTagged()`, `setConfigValue()`) are documented at [auditstream.dev/docs/typescript](https://auditstream.dev/docs/typescript/).
 
 > **Backend-only API:** `audit.query()` returns raw `HistoryEntry` rows with internal database metadata and raw `before`/`after` snapshots. Enforce authentication and tenant authorization on the server, and project each entry to an allowlisted client DTO before sending data to browsers. For high-QPS tenant feeds, add the [opt-in tenant indexes](https://github.com/auditstream/auditstream/blob/main/docs/reference/cli/history.md#opt-in-tenant-indexes).
+
+Both functions raise `INVALID_QUERY` before running SQL when a filter or record ID contains NUL or an unpaired surrogate, or when a pagination cursor is malformed, so client-supplied values do not reach PostgreSQL as invalid input.
 
 ```ts
 import { audit } from "@auditstream/node";
@@ -110,10 +114,17 @@ app.use(
       const user = (req as AuthedRequest).user;
       return user ? { type: "user", id: user.id, ...(user.tenantId ? { tenant: user.tenantId } : {}) } : undefined;
     },
-    context: (req) => ({ requestId: req.header("x-request-id") ?? "req_unknown" }),
+    context: (req) => {
+      const requestId = req.header("x-request-id");
+      return requestId && /^[A-Za-z0-9._-]{1,64}$/.test(requestId)
+        ? { requestId }
+        : undefined;
+    },
   }),
 );
 ```
+
+Always validate and bound client-supplied headers such as `x-request-id` (and opt-in `userAgent`) before placing them in `context`, so oversized or malformed headers cannot exceed the 512-byte serialized actor+context payload limit (`PAYLOAD_TOO_LARGE`).
 
 #### Hono (`@auditstream/node/hono`)
 

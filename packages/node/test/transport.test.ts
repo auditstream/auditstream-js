@@ -185,7 +185,7 @@ describe("@auditstream/node transport codec", () => {
   });
 
   it("caches canonical payload and encoded tag per audit.as() scope via process-wide WeakMap", async () => {
-    const cacheSymbol = Symbol.for("auditstream.node.scopeCache.v1");
+    const cacheSymbol = Symbol.for("auditstream.node.scopeCache.v2");
     const scopeCache = (globalThis as Record<PropertyKey, unknown>)[cacheSymbol];
     expect(scopeCache).toBeInstanceOf(WeakMap);
 
@@ -378,6 +378,13 @@ describe("@auditstream/node transport codec", () => {
       { type: "user", id: "u1", context: { source: 42 } },
       { type: "user", id: "u1", context: { ip: "" } },
       { type: "user", id: "u1", context: { userAgent: null } },
+      { type: "user", id: "u\0b" },
+      { type: "user", id: "u\ud800" },
+      { type: "user", id: "u1", tenant: "org\0" },
+      { type: "ai_agent", id: "a1", onBehalfOf: { type: "user", id: "u\udfff" } },
+      { type: "user", id: "u1", context: { requestId: "req\0" } },
+      { type: "user", id: "u1", extra: [{ label: "\ud800" }] },
+      { type: "user", id: "u1", context: { labels: { "k\0": 1 } } },
     ];
 
     for (const payload of invalidPayloads) {
@@ -392,6 +399,20 @@ describe("@auditstream/node transport codec", () => {
     expect(decodeScope(toCommentSql({ type: "user", id: "u1", context: {} }))).toEqual({
       actor: { type: "user", id: "u1" },
       context: {},
+      actorSource: "comment",
+    });
+
+    expect(
+      decodeScope(
+        toCommentSql({
+          type: "user",
+          id: "u_📦\\u0000",
+          context: { source: "🚀\\udfff" },
+        }),
+      ),
+    ).toEqual({
+      actor: { type: "user", id: "u_📦\\u0000" },
+      context: { source: "🚀\\udfff" },
       actorSource: "comment",
     });
 

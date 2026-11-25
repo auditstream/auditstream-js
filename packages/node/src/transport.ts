@@ -6,8 +6,10 @@ import {
   audit,
   type CachedScopePayload,
   getCachedScopePayload,
+  hasInvalidText,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
+  serializeScopePayload,
 } from "./context.js";
 
 /**
@@ -53,7 +55,6 @@ const AUDITSTREAM_PREFIX = "auditstream='";
 const COMMA_AUDITSTREAM_PREFIX = ",auditstream='";
 const TAIL_SLICE_CHARS = 4096;
 
-const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -366,16 +367,7 @@ function serializeCanonicalPayload(scope: AuditScope): { json: string; bytes: Ui
     }
   }
 
-  const json = JSON.stringify(ordered);
-  const bytes = utf8Encoder.encode(json);
-  if (bytes.byteLength > MAX_PAYLOAD_BYTES) {
-    throw new AuditstreamError(
-      "PAYLOAD_TOO_LARGE",
-      `serialized actor payload is ${bytes.byteLength} UTF-8 bytes, exceeding the ${MAX_PAYLOAD_BYTES}-byte limit`,
-    );
-  }
-
-  return { json, bytes };
+  return serializeScopePayload(ordered);
 }
 
 function getOrEncodeCached(cached: CachedScopePayload): string {
@@ -563,6 +555,11 @@ export function decodeScope(sql: string): DecodedTransport {
   try {
     parsed = JSON.parse(text);
   } catch {
+    return { actor: null, context: null, actorSource: "invalid" };
+  }
+
+  // PostgreSQL jsonb rejects \u0000 (22P05) and unpaired UTF-16 surrogates (22P02).
+  if (text.includes("\\u") && hasInvalidText(parsed)) {
     return { actor: null, context: null, actorSource: "invalid" };
   }
 
