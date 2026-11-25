@@ -27,6 +27,7 @@ jobs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       snapshot: ${{ steps.check.outputs.snapshot }}
       has_changesets: ${{ steps.pending.outputs.has_changesets }}
+      release_version: ${{ steps.check.outputs.release_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,9 +110,16 @@ jobs:
           fi
 
           UNPUBLISHED=false
+          RELEASE_VERSION=""
           for pkg in packages/node/package.json packages/prisma/package.json packages/drizzle/package.json; do
             NAME=$(node -e "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).name)" "$pkg")
             VERSION=$(node -e "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version)" "$pkg")
+            if [ -z "$RELEASE_VERSION" ]; then
+              RELEASE_VERSION="$VERSION"
+            elif [ "$RELEASE_VERSION" != "$VERSION" ]; then
+              echo "Version mismatch across fixed packages: expected $RELEASE_VERSION, got $VERSION ($NAME)" >&2
+              exit 1
+            fi
             if ! npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
               echo "Unpublished version detected: ${NAME}@${VERSION}"
               UNPUBLISHED=true
@@ -120,6 +128,7 @@ jobs:
 
           echo "should_publish=$UNPUBLISHED" >> "$GITHUB_OUTPUT"
           echo "snapshot=false" >> "$GITHUB_OUTPUT"
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
   publish:
     needs: version
@@ -166,3 +175,89 @@ jobs:
       - name: Publish release via npm trusted publishing
         if: needs.version.outputs.snapshot != 'true'
         run: pnpm -r --filter '!@auditstream/test-utils' publish --access public --no-git-checks
+
+  github-release:
+    needs:
+      - version
+      - publish
+    if: needs.version.outputs.should_publish == 'true' && needs.version.outputs.snapshot != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create git tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.release_version }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Invalid release version: $VERSION" >&2
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists; skipping."
+            exit 0
+          fi
+
+          node - <<'EOF' > /tmp/release-notes.md
+          const fs = require("node:fs");
+
+          const version = process.env.VERSION;
+          const packages = [
+            { name: "@auditstream/node", changelog: "packages/node/CHANGELOG.md" },
+            { name: "@auditstream/prisma", changelog: "packages/prisma/CHANGELOG.md" },
+            { name: "@auditstream/drizzle", changelog: "packages/drizzle/CHANGELOG.md" },
+          ];
+
+          function extractSection(markdown, targetVersion) {
+            const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+            const header = `## ${targetVersion}`;
+            const start = lines.findIndex((line) => line.trim() === header);
+            if (start === -1) return "";
+            let end = lines.length;
+            for (let i = start + 1; i < lines.length; i += 1) {
+              if (lines[i].startsWith("## ")) {
+                end = i;
+                break;
+              }
+            }
+            return lines.slice(start + 1, end).join("\n").trim();
+          }
+
+          const sections = [
+            "## Published packages",
+            "",
+            ...packages.map(
+              ({ name }) =>
+                `- [\`${name}@${version}\`](https://www.npmjs.com/package/${name}/v/${version})`,
+            ),
+          ];
+
+          for (const { name, changelog } of packages) {
+            if (!fs.existsSync(changelog)) continue;
+            const notes = extractSection(fs.readFileSync(changelog, "utf8"), version);
+            if (notes) {
+              sections.push("", `## \`${name}\``, "", notes);
+            }
+          }
+
+          process.stdout.write(`${sections.join("\n")}\n`);
+          EOF
+
+          ARGS=("$TAG" --target "$TARGET_SHA" --title "$TAG" --notes-file /tmp/release-notes.md)
+          if [[ "$VERSION" == *-* ]]; then
+            ARGS+=(--prerelease)
+          fi
+
+          gh release create "${ARGS[@]}"
