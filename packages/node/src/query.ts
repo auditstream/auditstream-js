@@ -100,7 +100,7 @@ const CURSOR_TIMESTAMP_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{1,6}Z$/;
 const BIGINT_DECIMAL_PATTERN = /^-?\d+$/;
 const ISO_BOUND_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2}))?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ]([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,6}))?(Z|[+-](?:0\d|1[0-5]):[0-5]\d))?$/;
 
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
@@ -180,6 +180,13 @@ function parseTimestampBound(raw: unknown, field: string): ParsedTimestampBound 
     const ms = raw.getTime();
     if (Number.isNaN(ms)) {
       throw new AuditstreamError("INVALID_QUERY", `${field} must be a valid Date`);
+    }
+    const year = raw.getUTCFullYear();
+    if (year < 1 || year > 9999) {
+      throw new AuditstreamError(
+        "INVALID_QUERY",
+        `${field} must have a UTC year between 0001 and 9999`,
+      );
     }
     return { sqlValue: raw.toISOString(), epochMicros: BigInt(ms) * 1000n };
   }

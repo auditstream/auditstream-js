@@ -561,7 +561,7 @@ export function serializeRecordIdJson(raw: unknown): string {
   if (!isPlainObject(raw)) {
     throw new AuditstreamError("INVALID_QUERY", "query.recordId must be a JSON object");
   }
-  let json: string;
+  let json: string | undefined;
   try {
     json = JSON.stringify(raw);
   } catch (err) {
@@ -570,6 +570,9 @@ export function serializeRecordIdJson(raw: unknown): string {
       "INVALID_QUERY",
       `query.recordId is not JSON-serializable: ${detail}`,
     );
+  }
+  if (typeof json !== "string" || !json.startsWith("{")) {
+    throw new AuditstreamError("INVALID_QUERY", "query.recordId must serialize to a JSON object");
   }
   // JSON.stringify escapes NUL and unpaired surrogates, so only parse when an escape is present.
   if (json.includes("\\u") && hasInvalidText(JSON.parse(json))) {

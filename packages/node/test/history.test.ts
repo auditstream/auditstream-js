@@ -462,4 +462,42 @@ describe("audit.history()", () => {
     await expect(audit.history(exec, query)).rejects.toMatchObject({ code: "INVALID_QUERY" });
     expect(exec).not.toHaveBeenCalled();
   });
+
+  it("rejects non-object toJSON(), circular, and deeply nested invalid recordId with INVALID_QUERY", async () => {
+    const exec = vi.fn(() => []);
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    let deepInvalid: Record<string, unknown> = { leaf: "a\0b" };
+    let deepValid: Record<string, unknown> = { leaf: "a\\u0000" };
+    for (let i = 0; i < 5000; i++) {
+      deepInvalid = { nested: deepInvalid };
+      deepValid = { nested: deepValid };
+    }
+
+    const badRecordIds: readonly unknown[] = [
+      {
+        toJSON() {
+          return undefined;
+        },
+      },
+      {
+        toJSON() {
+          return "scalar";
+        },
+      },
+      circular,
+      deepInvalid,
+    ];
+
+    for (const recordId of badRecordIds) {
+      await expect(
+        audit.history(exec, { table: "invoice", recordId: recordId as { id: number } }),
+      ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_QUERY" });
+    }
+    expect(exec).not.toHaveBeenCalled();
+
+    await audit.history(exec, { table: "invoice", recordId: deepValid as { id: number } });
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
 });

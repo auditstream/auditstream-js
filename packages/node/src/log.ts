@@ -1,4 +1,4 @@
-import { AuditstreamError } from "./context.js";
+import { AuditstreamError, hasInvalidText } from "./context.js";
 
 /**
  * Maximum Unicode code point length of an application event `action` per Auditstream Specification 0.1.0.
@@ -58,6 +58,12 @@ function validateAction(raw: unknown): string {
       "event.action must have trimmed length of at least 1 character",
     );
   }
+  if (hasInvalidText(raw)) {
+    throw new AuditstreamError(
+      "INVALID_EVENT",
+      "event.action must not contain NUL or unpaired surrogates",
+    );
+  }
   const codePointLength = [...raw].length;
   if (codePointLength > MAX_ACTION_LENGTH) {
     throw new AuditstreamError(
@@ -92,6 +98,13 @@ function serializeOptionalJsonObject(value: unknown, field: string): string | nu
 
   if (typeof serialized !== "string" || !serialized.startsWith("{")) {
     throw new AuditstreamError("INVALID_EVENT", `${field} must serialize to a JSON object`);
+  }
+  // JSON.stringify escapes NUL and unpaired surrogates, so only parse when an escape is present.
+  if (serialized.includes("\\u") && hasInvalidText(JSON.parse(serialized))) {
+    throw new AuditstreamError(
+      "INVALID_EVENT",
+      `${field} must not contain NUL or unpaired surrogates`,
+    );
   }
   return serialized;
 }

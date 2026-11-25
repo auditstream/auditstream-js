@@ -6,6 +6,7 @@ import {
   audit,
   type CachedScopePayload,
   getCachedScopePayload,
+  hasInvalidText,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
   serializeScopePayload,
@@ -554,6 +555,11 @@ export function decodeScope(sql: string): DecodedTransport {
   try {
     parsed = JSON.parse(text);
   } catch {
+    return { actor: null, context: null, actorSource: "invalid" };
+  }
+
+  // PostgreSQL jsonb rejects \u0000 (22P05) and unpaired UTF-16 surrogates (22P02).
+  if (text.includes("\\u") && hasInvalidText(parsed)) {
     return { actor: null, context: null, actorSource: "invalid" };
   }
 

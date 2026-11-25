@@ -45,7 +45,7 @@ Actor and context strings must contain valid Unicode and be free of NUL characte
 
 ### Application events (`audit.log`)
 
-Record domain events that do not modify a table through `auditstream.log_event()`:
+Record domain events that do not modify a table through `auditstream.log_event()`. `audit.log()` raises `INVALID_EVENT` before running SQL if `action`, `target`, or `data` contains NUL characters or unpaired surrogates:
 
 ```ts
 import { audit } from "@auditstream/node";
@@ -118,11 +118,13 @@ app.use(
       const requestId = req.header("x-request-id");
       return requestId && /^[A-Za-z0-9._-]{1,64}$/.test(requestId)
         ? { requestId }
-        : { requestId: "req_unknown" };
+        : undefined;
     },
   }),
 );
 ```
+
+Always validate and bound client-supplied headers such as `x-request-id` (and opt-in `userAgent`) before placing them in `context`, so oversized or malformed headers cannot exceed the 512-byte serialized actor+context payload limit (`PAYLOAD_TOO_LARGE`).
 
 #### Hono (`@auditstream/node/hono`)
 

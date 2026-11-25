@@ -201,6 +201,7 @@ describe("audit.query()", () => {
     ["0000-01-01T00:00:00.0Z", "1"],
     ["2026-01-01T24:00:00.0Z", "1"],
     ["2026-01-01T00:60:00.0Z", "1"],
+    ["2026-01-01T23:59:60.0Z", "1"],
     ["2026-01-01T00:00:61.0Z", "1"],
   ])("rejects an invalid cursor (%s, %s) before calling the executor", async (t, i) => {
     const exec = vi.fn(() => []);
@@ -282,15 +283,40 @@ describe("audit.query()", () => {
       { since: "" },
       { since: "not-a-date" },
       { since: "2026-02-30" },
+      { since: "2026-01-01T24:00:00Z" },
+      { since: "2026-01-01T24:00:00.500000Z" },
+      { since: "2026-01-01T23:59:60Z" },
+      { since: "2026-01-01T00:00:00+16:00" },
+      { until: "2026-01-01T00:00:00-16:00" },
+      { since: "2026-01-01T00:00:00+05:60" },
+      { since: new Date("0000-01-01T00:00:00Z") },
+      { until: new Date(8640000000000000) },
       { until: new Date(Number.NaN) },
       { since: "2026-06-15T00:00:00Z", until: "2026-06-15T00:00:00Z" },
       { since: "2026-06-16T00:00:00Z", until: "2026-06-15T00:00:00Z" },
       { since: "2026-06-15T00:00:00.000005Z", until: "2026-06-15T00:00:00.000004Z" },
       { recordId: [] as unknown as { id: number } },
+      {
+        recordId: {
+          toJSON() {
+            return undefined;
+          },
+        } as unknown as { id: number },
+      },
       { unbounded: "yes" as unknown as boolean },
       { cursor: "", unbounded: true },
       { cursor: "not-valid-base64!!!", unbounded: true },
       { cursor: "e30", unbounded: true },
+      { cursor: `${cursorFor(leapDay, "1")}=`, unbounded: true },
+      { cursor: "A".repeat(257), unbounded: true },
+      {
+        cursor: Buffer.from(JSON.stringify({ v: 1, t: 123, i: "1" })).toString("base64url"),
+        unbounded: true,
+      },
+      {
+        cursor: Buffer.from(JSON.stringify({ v: 1, t: leapDay, i: 1 })).toString("base64url"),
+        unbounded: true,
+      },
     ];
 
     for (const bad of invalidQueries) {
@@ -329,5 +355,18 @@ describe("audit.query()", () => {
       "2026-06-16T00:00:00.000001Z",
       51,
     ]);
+  });
+
+  it("accepts PostgreSQL-valid timezone offsets up to +/-15:59 and Date years 0001..9999", async () => {
+    const exec = vi.fn<AuditQueryExecutor>(() => []);
+    await audit.query(exec, {
+      since: "2026-06-15T00:00:00+15:59",
+      until: "2026-06-15T00:00:00-15:59",
+    });
+    await audit.query(exec, {
+      since: new Date("0001-01-01T00:00:00.000Z"),
+      until: new Date("9999-12-31T23:59:59.999Z"),
+    });
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });

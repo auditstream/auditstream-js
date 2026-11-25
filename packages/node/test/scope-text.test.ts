@@ -7,6 +7,9 @@ describe("actor and context text", () => {
   const invalidFields: [AuditScope, string][] = [
     [{ actor: { ...actor, id: "a\0b" } }, "INVALID_ACTOR"],
     [{ actor: { ...actor, tenant: "\ud800" } }, "INVALID_ACTOR"],
+    [{ actor: { ...actor, id: "\udfff\ud800" } }, "INVALID_ACTOR"],
+    [{ actor: { ...actor, id: "ok\ud800" } }, "INVALID_ACTOR"],
+    [{ actor: { ...actor, id: "\udfffok" } }, "INVALID_ACTOR"],
     [{ actor: { ...actor, onBehalfOf: { ...actor, id: "\udfff" } } }, "INVALID_ACTOR"],
     [{ actor, context: { requestId: "a\0b" } }, "INVALID_CONTEXT"],
     [{ actor, context: { source: "\ud800" } }, "INVALID_CONTEXT"],

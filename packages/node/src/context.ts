@@ -291,20 +291,49 @@ function validateContext(raw: unknown): AuditContext {
   return Object.freeze(context);
 }
 
+function isInvalidTextString(value: string): boolean {
+  // In Unicode mode a valid surrogate pair is one code point outside this range.
+  return value.includes("\0") || /[\uD800-\uDFFF]/u.test(value);
+}
+
 /**
  * Internal check for text PostgreSQL cannot store or compare: NUL, or an unpaired UTF-16
  * surrogate in a string or in any key or value of a nested object or array.
  */
 export function hasInvalidText(value: unknown): boolean {
   if (typeof value === "string") {
-    // In Unicode mode a valid surrogate pair is one code point outside this range.
-    return value.includes("\0") || /[\uD800-\uDFFF]/u.test(value);
+    return isInvalidTextString(value);
   }
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    Object.entries(value).some(([key, child]) => hasInvalidText(key) || hasInvalidText(child))
-  );
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === "string") {
+      if (isInvalidTextString(current)) {
+        return true;
+      }
+      continue;
+    }
+    if (typeof current !== "object" || current === null) {
+      continue;
+    }
+    if (Array.isArray(current)) {
+      for (let i = 0; i < current.length; i++) {
+        stack.push(current[i]);
+      }
+      continue;
+    }
+    for (const [key, child] of Object.entries(current)) {
+      if (isInvalidTextString(key)) {
+        return true;
+      }
+      stack.push(child);
+    }
+  }
+  return false;
 }
 
 function validateSerializedText(json: string): void {
