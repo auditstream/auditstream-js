@@ -15,7 +15,7 @@ TypeScript adapters and query helpers for [Auditstream](https://github.com/audit
 
 Application code never writes audit rows directly. These packages propagate the active actor through `AsyncLocalStorage` and attach it to outgoing SQL queries so database capture triggers record who acted — including delegated AI agents (`onBehalfOf`).
 
-**Status:** v0.2.0 (pre-1.0), targeting [Auditstream Specification 0.1.1 (`spec-v0.1.1`)](https://github.com/auditstream/auditstream/tree/spec-v0.1.1/spec).
+**Status:** v0.2.1 (pre-1.0), targeting [Auditstream Specification 0.1.1 (`spec-v0.1.1`)](https://github.com/auditstream/auditstream/tree/spec-v0.1.1/spec).
 
 ## Packages
 
