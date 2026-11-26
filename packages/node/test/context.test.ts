@@ -176,6 +176,121 @@ describe("audit.as() validation (spec 0.1.0)", () => {
     });
     expect(fn).not.toHaveBeenCalled();
   });
+
+  it("rejects prototype-hijacking keys, non-plain prototypes, throwing getters, and hostile Proxies in audit.as() before calling fn", async () => {
+    const fn = vi.fn();
+
+    const protoBoom = new Proxy(
+      { type: "user", id: "u1" },
+      {
+        getPrototypeOf(): never {
+          throw new Error("getPrototypeOf boom");
+        },
+      },
+    );
+    const { proxy: revokedActor, revoke: revokeActor } = Proxy.revocable(
+      { type: "user", id: "u1" },
+      {},
+    );
+    revokeActor();
+    const { proxy: revokedOptions, revoke: revokeOptions } = Proxy.revocable({}, {});
+    revokeOptions();
+
+    const badActors: readonly unknown[] = [
+      JSON.parse('{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}'),
+      JSON.parse('{"type":"user","id":"u1","constructor":{"x":1}}'),
+      JSON.parse('{"type":"user","id":"u1","prototype":{"x":1}}'),
+      {
+        type: "ai_agent",
+        id: "a1",
+        onBehalfOf: JSON.parse('{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}'),
+      },
+      {
+        type: "user",
+        id: "u1",
+        extra: { nested: JSON.parse('{"__proto__":{"x":1}}') },
+      },
+      Object.assign(Object.create({ tenant: "spoofed" }) as Record<string, unknown>, {
+        type: "user",
+        id: "u1",
+      }),
+      {
+        type: "ai_agent",
+        id: "a1",
+        onBehalfOf: Object.assign(Object.create({ tenant: "spoofed" }) as Record<string, unknown>, {
+          type: "user",
+          id: "u1",
+        }),
+      },
+      {
+        type: "user",
+        id: "u1",
+        get unused(): string {
+          throw new Error("getter boom");
+        },
+      },
+      protoBoom,
+      revokedActor,
+    ];
+
+    for (const actor of badActors) {
+      await expect(audit.as(actor as Actor, fn)).rejects.toMatchObject({
+        name: "AuditstreamError",
+        code: "INVALID_ACTOR",
+      });
+    }
+
+    const badContexts: readonly unknown[] = [
+      JSON.parse('{"requestId":"r1","__proto__":{"source":"evil"}}'),
+      JSON.parse('{"constructor":{"x":1}}'),
+      JSON.parse('{"nested":{"prototype":1}}'),
+      Object.assign(Object.create({ source: "spoofed" }) as Record<string, unknown>, {
+        requestId: "r1",
+      }),
+      {
+        requestId: "r1",
+        get unused(): string {
+          throw new Error("context getter boom");
+        },
+      },
+      protoBoom,
+      revokedActor,
+    ];
+
+    for (const context of badContexts) {
+      await expect(
+        audit.as({ type: "user", id: "u1" }, fn, { context: context as AuditContext }),
+      ).rejects.toMatchObject({
+        name: "AuditstreamError",
+        code: "INVALID_CONTEXT",
+      });
+    }
+
+    await expect(
+      audit.as({ type: "user", id: "u1" }, fn, {
+        get context(): AuditContext {
+          throw new Error("options.context boom");
+        },
+      }),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_CONTEXT" });
+    await expect(
+      audit.as(
+        { type: "user", id: "u1" },
+        fn,
+        revokedOptions as unknown as { context?: AuditContext },
+      ),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_CONTEXT" });
+
+    expect(fn).not.toHaveBeenCalled();
+
+    // Null-prototype plain objects without forbidden keys remain valid.
+    const nullProtoActor = Object.assign(Object.create(null) as Record<string, unknown>, {
+      type: "user",
+      id: "usr_null",
+    }) as unknown as Actor;
+    const observed = await audit.as(nullProtoActor, () => audit.current());
+    expect(observed).toEqual({ actor: { type: "user", id: "usr_null" } });
+  });
 });
 
 describe("audit.as() scope propagation", () => {
