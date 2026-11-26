@@ -8,7 +8,7 @@ import {
 } from "../src/postgres-js.js";
 
 interface RecordedUnsafe {
-  readonly scope: "root" | "tx" | "savepoint";
+  readonly scope: "root" | "tx" | "savepoint" | "reserved";
   readonly query: string;
   readonly parameters: readonly unknown[] | undefined;
   readonly queryOptions: PostgresJsUnsafeOptions | undefined;
@@ -17,22 +17,31 @@ interface RecordedUnsafe {
 interface FakePostgresJsTx extends PostgresJsTransactionLike {
   unsafe(
     query: string,
-    parameters?: readonly unknown[],
+    parameters?: readonly unknown[] | PostgresJsUnsafeOptions,
     queryOptions?: PostgresJsUnsafeOptions,
   ): Promise<unknown[]>;
+}
+
+interface FakeReservedPostgresJs extends FakePostgresJsTx {
+  (strings: TemplateStringsArray, ...values: unknown[]): Promise<string>;
+  release(): void;
+  begin?: (...args: never[]) => unknown;
 }
 
 interface FakePostgresJs extends PostgresJsLike {
   (strings: TemplateStringsArray, ...values: unknown[]): Promise<string>;
   unsafe(
     query: string,
-    parameters?: readonly unknown[],
+    parameters?: readonly unknown[] | PostgresJsUnsafeOptions,
     queryOptions?: PostgresJsUnsafeOptions,
   ): Promise<unknown[]>;
+  reserve(): Promise<FakeReservedPostgresJs>;
   readonly calls: RecordedUnsafe[];
   readonly templateCalls: string[];
   readonly beginOptions: Array<string | undefined>;
   readonly savepointNames: Array<string | undefined>;
+  releaseCount: number;
+  failNextReserve: Error | null;
 }
 
 function createFakePostgresJs(): FakePostgresJs {
@@ -41,11 +50,40 @@ function createFakePostgresJs(): FakePostgresJs {
   const beginOptions: Array<string | undefined> = [];
   const savepointNames: Array<string | undefined> = [];
 
+  // Mirrors real postgres.js unsafe(string, args = [], options = {}) runtime behavior:
+  // - 2 args with non-array 2nd arg: treats 2nd arg as options, args = []
+  // - 3 args with non-array 2nd arg: crashes just like postgres.js connection.js (q.args.forEach)
+  const recordUnsafe = (
+    scope: RecordedUnsafe["scope"],
+    query: string,
+    ...rest: unknown[]
+  ): Promise<unknown[]> => {
+    const firstArg = rest[0];
+    let parameters: readonly unknown[] | undefined;
+    let queryOptions = rest[1] as PostgresJsUnsafeOptions | undefined;
+
+    if (rest.length === 1 && firstArg !== undefined && !Array.isArray(firstArg)) {
+      queryOptions = firstArg as PostgresJsUnsafeOptions;
+      parameters = [];
+    } else if (firstArg !== undefined && !Array.isArray(firstArg)) {
+      throw new TypeError("q.args.forEach is not a function");
+    } else {
+      parameters = firstArg;
+    }
+
+    if (queryOptions !== undefined) {
+      // Mirrors postgres.js `'simple' in options` check (throws TypeError on null/primitives).
+      void ("simple" in (queryOptions as object));
+    }
+
+    calls.push({ scope, query, parameters, queryOptions });
+    return Promise.resolve([]);
+  };
+
   const makeTx = (scope: "tx" | "savepoint"): PostgresJsTransactionLike => {
     const tx: PostgresJsTransactionLike = {
-      unsafe(query, parameters, queryOptions) {
-        calls.push({ scope, query, parameters, queryOptions });
-        return Promise.resolve([]);
+      unsafe(query: string, ...rest: unknown[]) {
+        return recordUnsafe(scope, query, ...rest);
       },
       savepoint(...args: unknown[]) {
         const hasName = typeof args[0] === "string";
@@ -63,14 +101,39 @@ function createFakePostgresJs(): FakePostgresJs {
     return Promise.resolve("template-ok");
   }) as FakePostgresJs;
 
+  const makeReserved = (): FakeReservedPostgresJs => {
+    const reserved = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+      templateCalls.push(`reserved:${strings.join("?")}:${values.join(",")}`);
+      return Promise.resolve("reserved-template-ok");
+    }) as FakeReservedPostgresJs;
+
+    Object.assign(reserved, {
+      unsafe(query: string, ...rest: unknown[]) {
+        return recordUnsafe("reserved", query, ...rest);
+      },
+      release() {
+        fn.releaseCount += 1;
+      },
+      begin(...args: unknown[]) {
+        const hasOpts = typeof args[0] === "string";
+        const opts = hasOpts ? (args[0] as string) : undefined;
+        const cb = (hasOpts ? args[1] : args[0]) as (tx: PostgresJsTransactionLike) => unknown;
+        beginOptions.push(opts);
+        return Promise.resolve(cb(makeTx("tx")));
+      },
+    });
+    return reserved;
+  };
+
   Object.assign(fn, {
     calls,
     templateCalls,
     beginOptions,
     savepointNames,
-    unsafe(query: string, parameters?: readonly unknown[], queryOptions?: PostgresJsUnsafeOptions) {
-      calls.push({ scope: "root", query, parameters, queryOptions });
-      return Promise.resolve([]);
+    releaseCount: 0,
+    failNextReserve: null as Error | null,
+    unsafe(query: string, ...rest: unknown[]) {
+      return recordUnsafe("root", query, ...rest);
     },
     begin(...args: unknown[]) {
       const hasOpts = typeof args[0] === "string";
@@ -78,6 +141,14 @@ function createFakePostgresJs(): FakePostgresJs {
       const cb = (hasOpts ? args[1] : args[0]) as (tx: PostgresJsTransactionLike) => unknown;
       beginOptions.push(opts);
       return Promise.resolve(cb(makeTx("tx")));
+    },
+    reserve() {
+      if (fn.failNextReserve !== null) {
+        const err = fn.failNextReserve;
+        fn.failNextReserve = null;
+        return Promise.reject(err);
+      }
+      return Promise.resolve(makeReserved());
     },
   });
 
@@ -112,27 +183,272 @@ describe("wrapPostgresJs()", () => {
     expect(call?.queryOptions).toEqual({ prepare: false, simple: false });
   });
 
-  it("leaves untagged calls and already-tagged SQL unchanged with caller options intact", async () => {
+  it("leaves untagged calls intact and forces prepare: false on pre-tagged SQL without double-tagging", async () => {
     const raw = createFakePostgresJs();
     const sql = wrapPostgresJs(raw);
-    const opts: PostgresJsUnsafeOptions = { prepare: true };
+    const opts: PostgresJsUnsafeOptions = { prepare: true, simple: false };
 
-    // Outside any scope: options kept intact (prepare: true).
+    // Outside any scope, untagged: 1-arg, 2-arg params, and 3-arg calls stay untouched.
+    await sql.unsafe("SELECT 0");
+    await sql.unsafe("SELECT $1", [1]);
     await sql.unsafe("SELECT 1", [], opts);
 
-    // Already tagged SQL (for example from Drizzle 1.x .comment()): not double-tagged, options kept intact.
+    // Already tagged SQL (for example from Drizzle 1.x .comment()): not double-tagged,
+    // but prepare: false is enforced both inside and outside an active scope.
     const preTagged = tagSql("UPDATE invoice SET status = $1", {
       actor: { type: "service", id: "pre_tagged" },
     });
     await audit.as({ type: "user", id: "outer_user" }, async () => {
       await sql.unsafe(preTagged, ["done"], opts);
     });
+    await sql.unsafe(preTagged, ["outside"], opts);
+    await sql.unsafe(preTagged);
 
-    expect(raw.calls).toHaveLength(2);
-    expect(raw.calls[0]?.query).toBe("SELECT 1");
-    expect(raw.calls[0]?.queryOptions).toBe(opts);
+    expect(opts.prepare).toBe(true);
+    expect(raw.calls).toHaveLength(6);
+    expect(raw.calls[0]?.query).toBe("SELECT 0");
+    expect(raw.calls[0]?.parameters).toBeUndefined();
+    expect(raw.calls[0]?.queryOptions).toBeUndefined();
+
+    expect(raw.calls[1]?.query).toBe("SELECT $1");
+    expect(raw.calls[1]?.parameters).toEqual([1]);
+    expect(raw.calls[1]?.queryOptions).toBeUndefined();
+
+    expect(raw.calls[2]?.query).toBe("SELECT 1");
+    expect(raw.calls[2]?.queryOptions).toBe(opts);
+
+    expect(raw.calls[3]?.query).toBe(preTagged);
+    expect(raw.calls[3]?.parameters).toEqual(["done"]);
+    expect(raw.calls[3]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[4]?.query).toBe(preTagged);
+    expect(raw.calls[4]?.parameters).toEqual(["outside"]);
+    expect(raw.calls[4]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[5]?.query).toBe(preTagged);
+    expect(raw.calls[5]?.queryOptions).toEqual({ prepare: false });
+  });
+
+  it("supports the 2-argument sql.unsafe(query, options) overload without crashing", async () => {
+    const raw = createFakePostgresJs();
+    const sql = wrapPostgresJs(raw);
+    const callerOpts: PostgresJsUnsafeOptions = { prepare: true, simple: false };
+
+    // Inside a scope: 2-arg (query, options) tags cleanly, enforces prepare: false, preserves simple.
+    await audit.as({ type: "user", id: "usr_two_arg" }, async () => {
+      await sql.unsafe("UPDATE invoice SET status = 'paid' WHERE id = 1", callerOpts);
+    });
+
+    // Pre-tagged SQL with 2-arg (query, options) both outside and inside an active scope.
+    const preTagged = tagSql("UPDATE invoice SET status = 'void' WHERE id = 2", {
+      actor: { type: "service", id: "svc_pre" },
+    });
+    await sql.unsafe(preTagged, callerOpts);
+    await audit.as({ type: "user", id: "usr_outer_two_arg" }, async () => {
+      await sql.unsafe(preTagged, callerOpts);
+    });
+
+    // Outside any scope, untagged 2-arg (query, options): preserves prepare: true.
+    await sql.unsafe("SELECT 1", callerOpts);
+
+    // Explicit undefined parameters (2-arg and 3-arg) continue to work cleanly.
+    await audit.as({ type: "user", id: "usr_undef" }, async () => {
+      await sql.unsafe("UPDATE invoice SET status = 'u1'", undefined);
+      await sql.unsafe("UPDATE invoice SET status = 'u2'", undefined, callerOpts);
+    });
+
+    expect(callerOpts.prepare).toBe(true);
+    expect(raw.calls).toHaveLength(6);
+
+    expect(isTagged(raw.calls[0]?.query ?? "")).toBe(true);
+    expect(decodeScope(raw.calls[0]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_two_arg",
+    });
+    expect(raw.calls[0]?.parameters).toEqual([]);
+    expect(raw.calls[0]?.queryOptions).toEqual({ prepare: false, simple: false });
+
     expect(raw.calls[1]?.query).toBe(preTagged);
-    expect(raw.calls[1]?.queryOptions).toBe(opts);
+    expect(raw.calls[1]?.parameters).toEqual([]);
+    expect(raw.calls[1]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[2]?.query).toBe(preTagged);
+    expect(raw.calls[2]?.parameters).toEqual([]);
+    expect(raw.calls[2]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[3]?.query).toBe("SELECT 1");
+    expect(raw.calls[3]?.parameters).toEqual([]);
+    expect(raw.calls[3]?.queryOptions).toEqual({ prepare: true, simple: false });
+
+    expect(decodeScope(raw.calls[4]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_undef",
+    });
+    expect(raw.calls[4]?.queryOptions).toEqual({ prepare: false });
+
+    expect(decodeScope(raw.calls[5]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_undef",
+    });
+    expect(raw.calls[5]?.queryOptions).toEqual({ prepare: false, simple: false });
+  });
+
+  it("preserves postgres.js options semantics (frozen, null-proto, inherited simple, and invalid primitives)", async () => {
+    const raw = createFakePostgresJs();
+    const sql = wrapPostgresJs(raw);
+
+    // Prototype-inherited `simple: false` and `prepare: true`: preserves `simple: false`, forces `prepare: false`.
+    const inheritedOpts = Object.create({
+      simple: false,
+      prepare: true,
+    }) as PostgresJsUnsafeOptions;
+    // Frozen options object.
+    const frozenOpts = Object.freeze({ prepare: true, simple: false });
+    // Null-prototype options object.
+    const nullProtoOpts = Object.assign(Object.create(null) as Record<string, unknown>, {
+      prepare: true,
+      simple: false,
+    }) as PostgresJsUnsafeOptions;
+
+    await audit.as({ type: "user", id: "usr_opts_edge" }, async () => {
+      await sql.unsafe("UPDATE invoice SET status = 'inh'", inheritedOpts);
+      await sql.unsafe("UPDATE invoice SET status = 'frz'", frozenOpts);
+      await sql.unsafe("UPDATE invoice SET status = 'np'", nullProtoOpts);
+    });
+
+    expect(raw.calls).toHaveLength(3);
+    expect(raw.calls[0]?.queryOptions).toEqual({ prepare: false, simple: false });
+    expect(raw.calls[1]?.queryOptions).toEqual({ prepare: false, simple: false });
+    expect(raw.calls[2]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    // Invalid primitive/null options throw synchronously, matching real postgres.js.
+    const rawUnsafeAny = sql.unsafe as unknown as (...args: unknown[]) => unknown;
+    await audit.as({ type: "user", id: "usr_bad_opts" }, () => {
+      expect(() => rawUnsafeAny("SELECT 1", 42)).toThrow(TypeError);
+      expect(() => rawUnsafeAny("SELECT 1", null)).toThrow(TypeError);
+      expect(() => rawUnsafeAny("SELECT 1", [], null)).toThrow(TypeError);
+    });
+    // 3-arg (query, optionsObj, undefined) outside a scope matches postgres.js arity failure.
+    expect(() => rawUnsafeAny("SELECT 1", { prepare: true }, undefined)).toThrow(TypeError);
+  });
+
+  it("handles synchronous reserve() returns and defensive non-object client guards", async () => {
+    const raw = createFakePostgresJs();
+    const reservedSync = await raw.reserve();
+    const syncSql = Object.assign(
+      {
+        unsafe: raw.unsafe.bind(raw),
+        begin: raw.begin.bind(raw),
+        reserve: () => reservedSync,
+      },
+      { extra: "ok" },
+    );
+    const wrapped = wrapPostgresJs(syncSql);
+    const res = (wrapped.reserve as () => FakeReservedPostgresJs)();
+
+    await audit.as({ type: "user", id: "usr_sync_res" }, async () => {
+      await res.unsafe("UPDATE invoice SET status = 'sync'", { prepare: true });
+    });
+
+    expect(raw.calls).toHaveLength(1);
+    expect(raw.calls[0]?.scope).toBe("reserved");
+    expect(decodeScope(raw.calls[0]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_sync_res",
+    });
+    expect(raw.calls[0]?.queryOptions).toEqual({ prepare: false });
+    expect(wrapPostgresJs(null as unknown as PostgresJsLike)).toBeNull();
+  });
+
+  it("proxies sql.reserve() so reserved connections tag writes, disable prepare, and preserve release() and templates", async () => {
+    const raw = createFakePostgresJs();
+    const sql = wrapPostgresJs(raw);
+    const callerOpts: PostgresJsUnsafeOptions = { prepare: true, simple: false };
+
+    const reserved = await sql.reserve();
+    const preTagged = tagSql("UPDATE invoice SET status = $1", {
+      actor: { type: "service", id: "svc_res_pre" },
+    });
+    try {
+      // Idempotent when passed to wrapPostgresJs() again.
+      expect(wrapPostgresJs(reserved as unknown as PostgresJsLike)).toBe(reserved);
+
+      // Tagged writes across multiple scopes (3-arg and 2-arg overloads).
+      await audit.as({ type: "user", id: "usr_res_1" }, async () => {
+        await reserved.unsafe("UPDATE invoice SET status = $1 WHERE id = $2", ["a", 1], callerOpts);
+        await reserved.unsafe("UPDATE invoice SET status = 'b' WHERE id = 2", callerOpts);
+      });
+      await audit.as({ type: "user", id: "usr_res_2" }, async () => {
+        await reserved.unsafe("UPDATE invoice SET status = $1 WHERE id = $2", ["c", 3]);
+      });
+
+      // Pre-tagged outside any scope still enforces prepare: false.
+      await reserved.unsafe(preTagged, ["d"], callerOpts);
+
+      // Untagged outside any scope preserves caller options.
+      await reserved.unsafe("SELECT 1", [], callerOpts);
+
+      // Tagged templates on reserved connection pass through untouched.
+      const tpl = await audit.as({ type: "user", id: "usr_res_tpl" }, () => reserved`SELECT ${7}`);
+      expect(tpl).toBe("reserved-template-ok");
+
+      // Nested begin() on a reserved client (if present) also wraps its transaction callback.
+      await audit.as({ type: "user", id: "usr_res_tx" }, async () => {
+        await (reserved.begin as (cb: (tx: FakePostgresJsTx) => Promise<void>) => Promise<void>)(
+          async (tx) => {
+            await tx.unsafe("UPDATE invoice SET status = $1", ["tx_res"], callerOpts);
+          },
+        );
+      });
+    } finally {
+      reserved.release();
+    }
+
+    expect(callerOpts.prepare).toBe(true);
+    expect(raw.releaseCount).toBe(1);
+    expect(raw.templateCalls).toEqual(["reserved:SELECT ?:7"]);
+    expect(raw.calls).toHaveLength(6);
+
+    expect(raw.calls[0]?.scope).toBe("reserved");
+    expect(decodeScope(raw.calls[0]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_res_1",
+    });
+    expect(raw.calls[0]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[1]?.scope).toBe("reserved");
+    expect(decodeScope(raw.calls[1]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_res_1",
+    });
+    expect(raw.calls[1]?.parameters).toEqual([]);
+    expect(raw.calls[1]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[2]?.scope).toBe("reserved");
+    expect(decodeScope(raw.calls[2]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_res_2",
+    });
+    expect(raw.calls[2]?.queryOptions).toEqual({ prepare: false });
+
+    expect(raw.calls[3]?.scope).toBe("reserved");
+    expect(raw.calls[3]?.query).toBe(preTagged);
+    expect(raw.calls[3]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    expect(raw.calls[4]?.scope).toBe("reserved");
+    expect(raw.calls[4]?.query).toBe("SELECT 1");
+    expect(raw.calls[4]?.queryOptions).toBe(callerOpts);
+
+    expect(raw.calls[5]?.scope).toBe("tx");
+    expect(decodeScope(raw.calls[5]?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_res_tx",
+    });
+    expect(raw.calls[5]?.queryOptions).toEqual({ prepare: false, simple: false });
+
+    // Rejections from sql.reserve() propagate cleanly.
+    raw.failNextReserve = new Error("pool exhausted");
+    await expect(sql.reserve()).rejects.toThrow("pool exhausted");
   });
 
   it("wraps begin(cb), begin(options, cb), savepoint(cb), and savepoint(name, cb) recursively", async () => {

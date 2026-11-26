@@ -29,7 +29,7 @@ pnpm add @neondatabase/serverless
 
 ### Drizzle 1.x `.comment()` helper (`@auditstream/drizzle`)
 
-Use `auditComment()` with Drizzle 1.x query builders and relational queries when you do not need a driver wrapper:
+Use `auditComment()` with Drizzle 1.x query builders and relational queries when you do not need a driver wrapper (if using standalone `postgres.js` without `wrapPostgresJs()`, configure `postgres(url, { prepare: false })` so per-actor comments do not accumulate server-side prepared statements):
 
 ```ts
 import { auditComment } from "@auditstream/drizzle";
@@ -85,7 +85,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 
 ### `postgres.js` (`@auditstream/drizzle/postgres-js`)
 
-Wrap a `postgres.js` client with `wrapPostgresJs()`. It works with both `prepare: true` and `prepare: false`, directly and behind PgBouncer:
+Wrap a `postgres.js` client with `wrapPostgresJs()`. It works with both `prepare: true` and `prepare: false` (including `sql.begin()`, `savepoint()`, and `sql.reserve()`), directly and behind PgBouncer:
 
 ```ts
 import { wrapPostgresJs } from "@auditstream/drizzle/postgres-js";
@@ -147,7 +147,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 - **Unawaited lazy queries:** Always await Drizzle queries inside `audit.as()`. Returning an unawaited query exits the actor scope before execution.
 - **Next.js `proxy`:** `AsyncLocalStorage` does not cross Next.js `proxy`. Pass actor data through headers, cookies, rewrites, redirects, or URLs, and wrap handlers with `@auditstream/node/next`.
 - **Background jobs:** Jobs outside a request have no ambient actor. Open a scope with a `service` or `system` actor.
-- **Drizzle 1.x raw SQL and transactions:** `db.execute(sql)` and transaction control have no `.comment()` method. Use a driver wrapper, which skips statements already tagged by `auditComment()`.
+- **Drizzle 1.x raw SQL, transactions, and `postgres.js` prepared statements:** `db.execute(sql)` and transaction control have no `.comment()` method. Use a driver wrapper, which avoids double-tagging statements already tagged by `auditComment()` while still disabling server-side named prepared statements (`prepare: false` / dropping `name`). Standalone `postgres.js` users calling `auditComment()` without `wrapPostgresJs()` must configure `postgres(url, { prepare: false })` to prevent unbounded `pg_prepared_statements` growth across actors.
 - **AWS RDS Proxy:** Trailing SQL comments are the default transport because `set_config(..., true)` pins RDS Proxy sessions.
 
 ## Links

@@ -7,6 +7,7 @@
 // @public
 export interface PostgresJsLike extends PostgresJsTransactionLike {
     begin: (...args: never[]) => unknown;
+    reserve?: (...args: never[]) => unknown;
 }
 
 // @public

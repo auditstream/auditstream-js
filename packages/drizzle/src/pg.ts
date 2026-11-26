@@ -11,7 +11,7 @@ export interface PgQueryConfig {
   text: string;
   /** Optional bound parameter values. */
   values?: unknown[] | undefined;
-  /** Optional prepared statement name (removed whenever an Auditstream tag is added). */
+  /** Optional prepared statement name (removed whenever the query carries an Auditstream tag). */
   name?: string | undefined;
   /** Additional driver-specific fields (for example `rowMode`, `types`). */
   [key: string]: unknown;
@@ -58,23 +58,62 @@ function isSubmittable(value: unknown): value is PgSubmittable {
   );
 }
 
-function isQueryConfig(value: unknown): value is PgQueryConfig {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { text?: unknown }).text === "string"
-  );
+function readQueryConfigText(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const text = (value as { text?: unknown }).text;
+  return typeof text === "string" ? text : undefined;
 }
 
-function buildTaggedConfig(config: PgQueryConfig, scope: AuditScope | undefined): PgQueryConfig {
-  if (scope === undefined || isTagged(config.text)) {
-    return { ...config };
+function defineOwnDataProperty(
+  target: PgQueryConfig,
+  key: string,
+  value: unknown,
+  enumerable: boolean,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function cloneQueryConfig(
+  config: PgQueryConfig,
+  nextText: string,
+  dropName: boolean,
+): PgQueryConfig {
+  const proto: object | null = Object.getPrototypeOf(config);
+  const copy = Object.create(proto) as PgQueryConfig;
+  for (const key of Object.keys(config)) {
+    if (key === "text" || (dropName && key === "name")) {
+      continue;
+    }
+    defineOwnDataProperty(copy, key, config[key], true);
   }
-  const tagged: PgQueryConfig = { ...config, text: tagSql(config.text, scope) };
-  // Dropping `name` prevents node-postgres / Neon from caching a distinct server-side
-  // named prepared statement per actor comment.
-  delete tagged.name;
-  return tagged;
+  defineOwnDataProperty(copy, "text", nextText, true);
+  if (dropName) {
+    // Shadow `name` as an own undefined property so neither own nor inherited `name`
+    // values cause node-postgres / Neon to cache per-actor prepared statements.
+    defineOwnDataProperty(copy, "name", undefined, false);
+  }
+  return copy;
+}
+
+function buildTaggedConfig(
+  config: PgQueryConfig,
+  text: string,
+  scope: AuditScope | undefined,
+): PgQueryConfig {
+  if (isTagged(text)) {
+    return cloneQueryConfig(config, text, true);
+  }
+  if (scope === undefined) {
+    return cloneQueryConfig(config, text, false);
+  }
+  return cloneQueryConfig(config, tagSql(text, scope), true);
 }
 
 function rewriteQueryArgs(
@@ -117,8 +156,9 @@ function rewriteQueryArgs(
     return [marked];
   }
 
-  if (isQueryConfig(first)) {
-    const nextConfig = buildTaggedConfig(first, scope);
+  const configText = readQueryConfigText(first);
+  if (configText !== undefined) {
+    const nextConfig = buildTaggedConfig(first as PgQueryConfig, configText, scope);
     if (markPoolDecision) {
       decidedPoolConfigs.add(nextConfig);
     }
@@ -164,10 +204,11 @@ function patchClient(client: unknown): void {
  * - **Interactive transactions:** patches checked-out clients (`pool.on("connect")` and
  *   `pool.connect()`) so statements inside `db.transaction()` and savepoints read `audit.current()`
  *   from the caller's own async flow.
- * - **No named prepared statement leaks:** whenever a tag is added to a query config, its `name`
- *   property is omitted on a shallow copy so PostgreSQL never caches per-actor prepared statements.
+ * - **No named prepared statement leaks:** whenever a query config carries an Auditstream tag
+ *   (added here or already tagged, for example by Drizzle 1.x `.comment()`), its `name` property
+ *   is omitted on a shallow copy so PostgreSQL never caches per-actor prepared statements.
  * - **At most one tag:** statements already tagged (for example by Drizzle 1.x `.comment()`) are
- *   left unchanged.
+ *   not double-tagged.
  * - **Submittables untouched:** submittable objects with a `.submit()` method (such as `pg-cursor`
  *   or `pg-query-stream`) are passed through untouched.
  */

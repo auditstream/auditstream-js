@@ -224,19 +224,161 @@ describe("wrapPgPool()", () => {
       id: "usr_prep",
     });
 
-    // Already tagged (e.g. Drizzle 1.x .comment()): never double-tagged.
+    // Already tagged (e.g. Drizzle 1.x .comment()): never double-tagged, and drops `name`.
     const preTagged = tagSql("UPDATE invoice SET status = $1", {
       actor: { type: "user", id: "usr_drizzle_comment" },
     });
+    const preTaggedConfig: PgQueryConfig = {
+      text: preTagged,
+      values: ["open"],
+      name: "pre_upd",
+      rowMode: "array",
+    };
     await audit.as({ type: "user", id: "usr_outer" }, async () => {
-      await pool.query({ text: preTagged, values: ["open"] });
+      await pool.query(preTaggedConfig);
     });
+    expect(preTaggedConfig.name).toBe("pre_upd");
     expect(pool.client.queries[1]?.text).toBe(preTagged);
+    expect(pool.client.queries[1]?.name).toBeUndefined();
+    expect((pool.client.queries[1]?.raw as PgQueryConfig | undefined)?.rowMode).toBe("array");
+
+    // Pre-tagged outside any scope: still drops `name` without mutating caller config.
+    await pool.query(preTaggedConfig);
+    expect(preTaggedConfig.name).toBe("pre_upd");
+    expect(pool.client.queries[2]?.text).toBe(preTagged);
+    expect(pool.client.queries[2]?.name).toBeUndefined();
 
     // Untagged (outside any scope): preserves `name`.
     await pool.query(originalConfig);
-    expect(pool.client.queries[2]?.name).toBe("upd1");
-    expect(isTagged(pool.client.queries[2]?.text ?? "")).toBe(false);
+    expect(pool.client.queries[3]?.name).toBe("upd1");
+    expect(isTagged(pool.client.queries[3]?.text ?? "")).toBe(false);
+  });
+
+  it("drops name on pre-tagged queries on checked-out clients (inside and outside a scope)", async () => {
+    const pool = wrapPgPool(new FakeQueuingPool());
+    const client = await pool.connect();
+
+    const preTagged = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+      actor: { type: "service", id: "pre_tx" },
+    });
+    const cfg: PgQueryConfig = { text: preTagged, name: "drizzle_v1_prep" };
+
+    // Inside a scope, with Drizzle 1.x's (config, params) two-arg call shape.
+    await audit.as({ type: "user", id: "usr_outer" }, async () => {
+      await client.query(cfg, ["paid", 1]);
+    });
+
+    // Outside any scope.
+    await client.query(cfg, ["void", 2]);
+    pool.release();
+
+    expect(cfg.name).toBe("drizzle_v1_prep");
+    expect(pool.client.queries).toHaveLength(2);
+    expect(pool.client.queries[0]?.text).toBe(preTagged);
+    expect(pool.client.queries[0]?.name).toBeUndefined();
+    expect(pool.client.queries[0]?.values).toEqual(["paid", 1]);
+    expect(pool.client.queries[1]?.text).toBe(preTagged);
+    expect(pool.client.queries[1]?.name).toBeUndefined();
+    expect(pool.client.queries[1]?.values).toEqual(["void", 2]);
+  });
+
+  it("preserves prototype-inherited fields, handles frozen/null-prototype configs, reads text once, and shadows inherited name", async () => {
+    const pool = wrapPgPool(new FakeQueuingPool());
+    const preTagged = tagSql("UPDATE invoice SET status = $1", {
+      actor: { type: "service", id: "proto_pre" },
+    });
+
+    // 1. Prototype-inherited text, name, and rowMode.
+    const inheritedPreTagged = Object.create({
+      text: preTagged,
+      name: "proto_stmt",
+      rowMode: "array",
+    }) as PgQueryConfig;
+    await pool.query(inheritedPreTagged);
+    expect(pool.client.queries[0]?.text).toBe(preTagged);
+    expect(pool.client.queries[0]?.name).toBeUndefined();
+    expect((pool.client.queries[0]?.raw as PgQueryConfig | undefined)?.rowMode).toBe("array");
+
+    // 2. Frozen config (must not throw and must not mutate caller).
+    const frozen = Object.freeze({
+      text: preTagged,
+      values: ["frozen"],
+      name: "frozen_stmt",
+    });
+    await pool.query(frozen);
+    expect(frozen.name).toBe("frozen_stmt");
+    expect(pool.client.queries[1]?.text).toBe(preTagged);
+    expect(pool.client.queries[1]?.name).toBeUndefined();
+
+    // 3. Null-prototype config.
+    const nullProto = Object.assign(Object.create(null) as Record<string, unknown>, {
+      text: "UPDATE invoice SET status = 'np'",
+      name: "np_stmt",
+    }) as PgQueryConfig;
+    await audit.as({ type: "user", id: "usr_np" }, async () => {
+      await pool.query(nullProto);
+    });
+    expect(Object.getPrototypeOf(pool.client.queries[2]?.raw)).toBeNull();
+    expect(pool.client.queries[2]?.name).toBeUndefined();
+    expect(decodeScope(pool.client.queries[2]?.text ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_np",
+    });
+
+    // 4. Getter TOCTOU guard: text getter is read once and frozen on the forwarded config.
+    let reads = 0;
+    const getterConfig = {
+      get text(): string {
+        reads += 1;
+        return reads === 1 ? preTagged : "UPDATE invoice SET status = 'swapped'";
+      },
+      name: "toctou_stmt",
+    } as PgQueryConfig;
+    await pool.query(getterConfig);
+    expect(reads).toBe(1);
+    expect(pool.client.queries[3]?.text).toBe(preTagged);
+    expect(pool.client.queries[3]?.name).toBeUndefined();
+
+    // 5. Prototype-polluted `Object.prototype.name` is shadowed on tagged configs.
+    Object.defineProperty(Object.prototype, "name", {
+      value: "polluted_stmt",
+      writable: true,
+      configurable: true,
+    });
+    try {
+      await pool.query({ text: preTagged });
+      expect(pool.client.queries[4]?.name).toBeUndefined();
+    } finally {
+      delete (Object.prototype as { name?: unknown }).name;
+    }
+  });
+
+  it("drops name on queued pre-tagged pool.query configs under pool saturation without leaking intruder actor", async () => {
+    const pool = wrapPgPool(new FakeQueuingPool());
+    const held = await pool.connect();
+    expect(held).toBe(pool.client);
+
+    const preTagged = tagSql("UPDATE invoice SET status = $1", {
+      actor: { type: "service", id: "queued_pre_actor" },
+    });
+    const queuedPromise = pool.query({
+      text: preTagged,
+      values: ["queued"],
+      name: "queued_stmt",
+    });
+
+    await audit.as({ type: "user", id: "usr_intruder" }, async () => {
+      pool.release();
+      await queuedPromise;
+    });
+
+    expect(pool.client.queries).toHaveLength(1);
+    expect(pool.client.queries[0]?.text).toBe(preTagged);
+    expect(pool.client.queries[0]?.name).toBeUndefined();
+    expect(decodeScope(pool.client.queries[0]?.text ?? "").actor).toEqual({
+      type: "service",
+      id: "queued_pre_actor",
+    });
   });
 
   it("passes submittables (such as pg-cursor) through untouched", async () => {

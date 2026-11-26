@@ -32,6 +32,13 @@ export type SqlCommenterValues = Record<string, SqlCommenterValue>;
  * - `db.delete(...).where(...).comment(auditComment())`
  * - Relational queries via `{ comment: auditComment() }`
  *
+ * ### Prepared statements with standalone `postgres.js`
+ *
+ * When using `auditComment()` with `postgres.js` **without** `wrapPostgresJs()`, configure the
+ * client with `postgres(url, { prepare: false })`. Otherwise `postgres.js` caches one permanent
+ * server-side named prepared statement in `pg_prepared_statements` for every distinct actor or
+ * `requestId` comment.
+ *
  * ### Calls that still need a driver wrapper
  *
  * - `db.execute(sql)` and raw SQL helpers have no `.comment()` method.
@@ -40,7 +47,8 @@ export type SqlCommenterValues = Record<string, SqlCommenterValue>;
  *
  * For those paths, use a driver wrapper (`@auditstream/drizzle/pg`,
  * `@auditstream/drizzle/postgres-js`, or `@auditstream/drizzle/neon-http`); wrappers
- * inspect `isTagged()` and skip statements already tagged by `auditComment()`.
+ * inspect `isTagged()` to avoid double-tagging statements already tagged by `auditComment()`
+ * while still disabling server-side named prepared statements (`prepare: false` / dropping `name`).
  */
 export function auditComment(extra?: Readonly<SqlCommenterValues>): SqlCommenterValues {
   if (extra !== undefined && Object.hasOwn(extra, "auditstream")) {

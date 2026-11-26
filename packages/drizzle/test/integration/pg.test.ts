@@ -1,15 +1,24 @@
-import { audit } from "@auditstream/node";
+import { audit, tagSql } from "@auditstream/node";
 import { createTestDatabase, stopTestCluster, type TestDatabase } from "@auditstream/test-utils";
 import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { integer, pgTable, text } from "drizzle-orm/pg-core";
+import { eq as eqV1, sql as sqlV1 } from "drizzle-orm-v1";
+import { drizzle as drizzleV1 } from "drizzle-orm-v1/node-postgres";
+import { integer as integerV1, pgTable as pgTableV1, text as textV1 } from "drizzle-orm-v1/pg-core";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { auditComment } from "../../src/comment.js";
 import { wrapPgPool } from "../../src/pg.js";
 
 const invoice = pgTable("invoice", {
   id: integer("id").primaryKey(),
   status: text("status"),
+});
+
+const invoiceV1 = pgTableV1("invoice", {
+  id: integerV1("id").primaryKey(),
+  status: textV1("status"),
 });
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -219,5 +228,72 @@ describe("wrapPgPool() + Drizzle 0.45 node-postgres integration", () => {
     } finally {
       await pool.end();
     }
+  });
+
+  it("leaves zero auditstream= entries in pg_prepared_statements for pre-tagged named queries (Drizzle 1.x .comment() + .prepare() and direct pool/client configs)", async () => {
+    const startId = await resetAuditState();
+    const pool = wrapPgPool(new pg.Pool({ connectionString: db.appUrl, max: 1 }));
+    const ormV1 = drizzleV1({ client: pool });
+
+    try {
+      await ormV1.insert(invoiceV1).values({ id: 600, status: "init" });
+
+      for (let i = 0; i < 40; i += 1) {
+        await audit.as({ type: "user", id: `v1_pg_prep_${i}` }, async () => {
+          const prepared = ormV1
+            .update(invoiceV1)
+            .set({ status: sqlV1`${sqlV1.placeholder("status")}` })
+            .where(eqV1(invoiceV1.id, 600))
+            .comment(auditComment())
+            .prepare(`v1_upd_${i}`);
+          await prepared.execute({ status: `s_${i}` });
+        });
+      }
+
+      // Pre-tagged named query outside any active scope on both pool.query() and checked-out client.query().
+      const preTaggedPool = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+        actor: { type: "service", id: "pg_pre_pool" },
+      });
+      await pool.query({ text: preTaggedPool, values: ["pool_out", 600], name: "pre_pool_stmt" });
+
+      const client = await pool.connect();
+      try {
+        const preTaggedClient = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+          actor: { type: "service", id: "pg_pre_client" },
+        });
+        await client.query({
+          text: preTaggedClient,
+          values: ["client_out", 600],
+          name: "pre_client_stmt",
+        });
+      } finally {
+        client.release();
+      }
+
+      const prepRes = await pool.query<{ name: string; statement: string }>(
+        "SELECT name, statement FROM pg_prepared_statements",
+      );
+      const leaked = prepRes.rows.filter((r) => r.statement.includes("auditstream="));
+      expect(leaked).toEqual([]);
+    } finally {
+      await pool.end();
+    }
+
+    const updates = (
+      await adminClient.query<{ actor_id: string | null; actor_source: string | null }>(
+        `SELECT actor->>'id' AS actor_id, actor_source
+           FROM auditstream.changes
+          WHERE id > $1 AND table_name = 'invoice' AND op = 'UPDATE'
+          ORDER BY id ASC`,
+        [startId],
+      )
+    ).rows;
+
+    expect(updates).toHaveLength(42);
+    for (let i = 0; i < 40; i += 1) {
+      expect(updates[i]).toEqual({ actor_id: `v1_pg_prep_${i}`, actor_source: "comment" });
+    }
+    expect(updates[40]).toEqual({ actor_id: "pg_pre_pool", actor_source: "comment" });
+    expect(updates[41]).toEqual({ actor_id: "pg_pre_client", actor_source: "comment" });
   });
 });

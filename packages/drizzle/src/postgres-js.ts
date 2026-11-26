@@ -30,44 +30,69 @@ export interface PostgresJsTransactionLike {
 export interface PostgresJsLike extends PostgresJsTransactionLike {
   /** Starts an interactive database transaction. */
   begin: (...args: never[]) => unknown;
+  /** Reserves a dedicated connection from the pool. */
+  reserve?: (...args: never[]) => unknown;
 }
 
 const wrappedClients = new WeakSet<object>();
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
+function normalizeUnsafeArgs(rest: readonly unknown[]): {
+  readonly parameters: unknown;
+  readonly rawOptions: unknown;
+} {
+  const second = rest[0];
+  // Match postgres.js: a 2-argument call with a non-array second argument passes options.
+  if (rest.length === 1 && second !== undefined && !Array.isArray(second)) {
+    return { parameters: [], rawOptions: second };
+  }
+  return { parameters: second, rawOptions: rest[1] };
+}
+
+function buildNextOptions(queryOptions: unknown): PostgresJsUnsafeOptions {
+  if (queryOptions === undefined) {
+    return { prepare: false };
+  }
+  // Match postgres.js `'simple' in options` semantics: throws TypeError on null/primitives
+  // and retains prototype-inherited or non-enumerable `simple` without double-reading own getters.
+  const hasSimple = "simple" in (queryOptions as object);
+  const nextOptions: PostgresJsUnsafeOptions = {
+    ...(queryOptions as PostgresJsUnsafeOptions),
+    prepare: false,
+  };
+  if (hasSimple && !Object.hasOwn(nextOptions, "simple")) {
+    nextOptions.simple = (queryOptions as PostgresJsUnsafeOptions).simple;
+  }
+  return nextOptions;
+}
+
 function createUnsafeWrapper(
   target: PostgresJsTransactionLike,
-): (
-  query: string,
-  parameters?: readonly unknown[],
-  queryOptions?: PostgresJsUnsafeOptions,
-) => unknown {
-  const rawUnsafe = target.unsafe as (
-    query: string,
-    parameters?: readonly unknown[],
-    queryOptions?: PostgresJsUnsafeOptions,
-  ) => unknown;
+): (query: string, ...rest: unknown[]) => unknown {
+  const rawUnsafe = target.unsafe as (...args: unknown[]) => unknown;
 
-  return function wrappedUnsafe(
-    query: string,
-    parameters?: readonly unknown[],
-    queryOptions?: PostgresJsUnsafeOptions,
-  ): unknown {
-    const scope = audit.current();
-    if (scope === undefined || isTagged(query)) {
-      if (queryOptions !== undefined) {
-        return rawUnsafe.call(target, query, parameters, queryOptions);
-      }
-      if (parameters !== undefined) {
-        return rawUnsafe.call(target, query, parameters);
-      }
-      return rawUnsafe.call(target, query);
+  return function wrappedUnsafe(query: string, ...rest: unknown[]): unknown {
+    const alreadyTagged = isTagged(query);
+    const scope = alreadyTagged ? undefined : audit.current();
+
+    if (!alreadyTagged && scope === undefined) {
+      return rawUnsafe.call(target, query, ...rest);
     }
 
-    const taggedQuery = tagSql(query, scope);
-    // Always disable named server-side prepared statements when adding a per-actor comment
-    // so PostgreSQL and poolers never accumulate one prepared statement per actor.
-    const nextOptions: PostgresJsUnsafeOptions = { ...queryOptions, prepare: false };
-    return rawUnsafe.call(target, taggedQuery, parameters, nextOptions);
+    const { parameters, rawOptions } = normalizeUnsafeArgs(rest);
+    const nextQuery = scope === undefined ? query : tagSql(query, scope);
+    // Always disable named server-side prepared statements whenever a query carries an
+    // Auditstream tag (added here or pre-tagged, e.g. by Drizzle 1.x `.comment()`) so
+    // PostgreSQL and poolers never accumulate one prepared statement per actor.
+    const nextOptions = buildNextOptions(rawOptions);
+    return rawUnsafe.call(target, nextQuery, parameters, nextOptions);
   };
 }
 
@@ -84,32 +109,67 @@ function wrapTransactionCallback<TArgs extends unknown[]>(args: TArgs): TArgs {
   }
   const userCallback = last as (tx: PostgresJsTransactionLike) => unknown;
   const wrappedArgs = [...args] as TArgs;
-  wrappedArgs[lastIndex] = (tx: PostgresJsTransactionLike): unknown =>
-    userCallback(wrapTransactionClient(tx));
+  wrappedArgs[lastIndex] = (tx: PostgresJsTransactionLike): unknown => userCallback(wrapClient(tx));
   return wrappedArgs;
 }
 
-function wrapTransactionClient<TTx extends PostgresJsTransactionLike>(tx: TTx): TTx {
-  if (typeof tx !== "object" && typeof tx !== "function") {
-    return tx;
+function wrapCallbackMethod(
+  target: PostgresJsTransactionLike,
+  method: (...args: unknown[]) => unknown,
+): (...args: unknown[]) => unknown {
+  return (...args: unknown[]): unknown => method.apply(target, wrapTransactionCallback(args));
+}
+
+function wrapReserveMethod(
+  target: PostgresJsTransactionLike,
+  method: (...args: unknown[]) => unknown,
+): (...args: unknown[]) => unknown {
+  return (...args: unknown[]): unknown => {
+    const result = method.apply(target, args);
+    if (isPromiseLike(result)) {
+      return result.then((reserved) => wrapClient(reserved as PostgresJsTransactionLike));
+    }
+    return wrapClient(result as PostgresJsTransactionLike);
+  };
+}
+
+function getWrappedClientMethod(
+  target: PostgresJsTransactionLike,
+  prop: string | symbol,
+  unsafeWrapper: (query: string, ...rest: unknown[]) => unknown,
+): unknown {
+  if (prop === "unsafe") {
+    return unsafeWrapper;
   }
-  if (tx === null || wrappedClients.has(tx)) {
-    return tx;
+  if (prop === "begin" || prop === "savepoint") {
+    const fn = Reflect.get(target, prop);
+    return typeof fn === "function"
+      ? wrapCallbackMethod(target, fn as (...args: unknown[]) => unknown)
+      : undefined;
+  }
+  if (prop === "reserve") {
+    const fn = Reflect.get(target, prop);
+    return typeof fn === "function"
+      ? wrapReserveMethod(target, fn as (...args: unknown[]) => unknown)
+      : undefined;
+  }
+  return undefined;
+}
+
+function wrapClient<TClient extends PostgresJsTransactionLike>(client: TClient): TClient {
+  if ((typeof client !== "object" && typeof client !== "function") || client === null) {
+    return client;
+  }
+  if (wrappedClients.has(client)) {
+    return client;
   }
 
-  const unsafeWrapper = createUnsafeWrapper(tx);
+  const unsafeWrapper = createUnsafeWrapper(client);
 
-  const proxy = new Proxy(tx, {
+  const proxy = new Proxy(client, {
     get(target, prop, receiver) {
-      if (prop === "unsafe") {
-        return unsafeWrapper;
-      }
-      if (prop === "savepoint" && typeof target.savepoint === "function") {
-        const origSavepoint = target.savepoint as (...args: unknown[]) => unknown;
-        return (...args: unknown[]): unknown =>
-          origSavepoint.apply(target, wrapTransactionCallback(args));
-      }
-      return Reflect.get(target, prop, receiver);
+      const wrapped = getWrappedClientMethod(target, prop, unsafeWrapper);
+      return wrapped !== undefined ? wrapped : Reflect.get(target, prop, receiver);
     },
   });
 
@@ -124,43 +184,18 @@ function wrapTransactionClient<TTx extends PostgresJsTransactionLike>(tx: TTx): 
  *
  * Key guarantees:
  * - **Idempotent:** calling `wrapPostgresJs()` on an already-wrapped client returns it unchanged.
- * - **Transactions and nested savepoints:** intercepts `begin()` and recursive `savepoint()`
- *   callbacks so every `unsafe()` call inside interactive transactions is tagged with the active
- *   caller's actor.
- * - **No named prepared statement leaks:** whenever a tag is added, forces `prepare: false` on a
- *   shallow copy of `queryOptions` while preserving all other options. Calls outside a scope or
- *   already tagged (for example by Drizzle 1.x `.comment()`) keep the caller's original options
- *   untouched.
+ * - **Transactions, savepoints, and reserved connections:** intercepts `begin()`, recursive
+ *   `savepoint()` callbacks, and `reserve()` so every `unsafe()` call inside interactive
+ *   transactions or on reserved connections is tagged with the active caller's actor.
+ * - **No named prepared statement leaks:** forces `prepare: false` on a shallow copy of
+ *   `queryOptions` (while preserving all other options, including on the 2-argument
+ *   `unsafe(query, options)` overload) whenever a tag is added or the query is already tagged
+ *   (for example by Drizzle 1.x `.comment()`). Only untagged calls outside a scope keep the
+ *   caller's original options untouched.
  * - **Tagged-template calls untouched:** template-literal invocations (for example `sql` tagged
  *   templates) build their SQL text inside `postgres.js` and are passed through untouched without
  *   tagging. Drizzle sends all queries through `unsafe()`, never tagged templates.
  */
 export function wrapPostgresJs<TSql extends PostgresJsLike>(sql: TSql): TSql {
-  if (wrappedClients.has(sql)) {
-    return sql;
-  }
-
-  const unsafeWrapper = createUnsafeWrapper(sql);
-
-  const proxy = new Proxy(sql, {
-    get(target, prop, receiver) {
-      if (prop === "unsafe") {
-        return unsafeWrapper;
-      }
-      if (prop === "begin" && typeof target.begin === "function") {
-        const origBegin = target.begin as (...args: unknown[]) => unknown;
-        return (...args: unknown[]): unknown =>
-          origBegin.apply(target, wrapTransactionCallback(args));
-      }
-      if (prop === "savepoint" && typeof target.savepoint === "function") {
-        const origSavepoint = target.savepoint as (...args: unknown[]) => unknown;
-        return (...args: unknown[]): unknown =>
-          origSavepoint.apply(target, wrapTransactionCallback(args));
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  });
-
-  wrappedClients.add(proxy);
-  return proxy;
+  return wrapClient(sql);
 }
