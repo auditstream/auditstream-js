@@ -12,6 +12,7 @@ import {
   isTagged,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
+  parseExportRecord,
   setConfigValue,
   tagSql,
 } from "../src/index.js";
@@ -301,7 +302,9 @@ describe("@auditstream/node transport codec", () => {
       });
     }
 
-    // Empty or malformed base64url payloads are tagged (won't double-tag) and decode as invalid.
+    // Empty or malformed base64url payloads MUST NOT suppress tagging (isTagged === false),
+    // while decodeScope still reports them as invalid per spec/transport.md.
+    const fallbackScope: AuditScope = { actor: { type: "user", id: "usr_fallback" } };
     for (const malformed of [
       "SELECT 1 /*auditstream=''*/",
       "SELECT 1 /*auditstream='a!'*/",
@@ -309,22 +312,46 @@ describe("@auditstream/node transport codec", () => {
       "SELECT 1 /*auditstream='abcdé!'*/",
       "SELECT 1 /*auditstream='abé'*/",
     ]) {
-      expect(isTagged(malformed), `isTagged(${malformed})`).toBe(true);
+      expect(isTagged(malformed), `isTagged(${malformed})`).toBe(false);
       expect(decodeScope(malformed), `decodeScope(${malformed})`).toEqual({
         actor: null,
         context: null,
         actorSource: "invalid",
       });
+      const retagged = tagSql(malformed, fallbackScope);
+      expect(retagged).not.toBe(malformed);
+      expect(isTagged(retagged)).toBe(true);
+      expect(decodeScope(retagged)).toEqual({
+        actor: { type: "user", id: "usr_fallback" },
+        context: null,
+        actorSource: "comment",
+      });
     }
 
-    // Trailing Unicode whitespace (\u00A0) falls back cleanly to regex parity.
-    const unicodeTrailing = `UPDATE t SET v = 1 /*auditstream='${validTag}'*/\u00A0; `;
-    expect(isTagged(unicodeTrailing)).toBe(true);
-    expect(decodeScope(unicodeTrailing)).toEqual({
+    // Trailing ASCII whitespace (\t\n\r\f\v ) and semicolons match PostgreSQL resolve_actor().
+    const asciiTrailing = `UPDATE t SET v = 1 /*auditstream='${validTag}'*/ \t\r\n\f\v; `;
+    expect(isTagged(asciiTrailing)).toBe(true);
+    expect(decodeScope(asciiTrailing)).toEqual({
       actor: { type: "user", id: "usr_42" },
       context: null,
       actorSource: "comment",
     });
+
+    // Non-ASCII Unicode whitespace (\u00A0, \u2028, \u2029, \uFEFF) is lexed as an identifier by
+    // PostgreSQL scan.l and NOT trimmed by resolve_actor(), so it MUST NOT suppress tagging.
+    for (const nonAsciiTail of [
+      `INSERT INTO invoice(status) VALUES ('ok') RETURNING id /*auditstream='${validTag}'*/\u00A0`,
+      `UPDATE t SET v = 1 /*auditstream='${validTag}'*/\u00A0; `,
+      `SELECT 1 /*auditstream='${validTag}'*/\u2028`,
+      `SELECT 1 /*auditstream='${validTag}'*/\uFEFF`,
+    ]) {
+      expect(isTagged(nonAsciiTail), `isTagged(${nonAsciiTail})`).toBe(false);
+      expect(decodeScope(nonAsciiTail), `decodeScope(${nonAsciiTail})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: null,
+      });
+    }
 
     // Long SQL > 4096 chars: untagged vs tagged at end vs comment buried before the 4096-char tail.
     const padding = " ".repeat(5000);
@@ -336,10 +363,31 @@ describe("@auditstream/node transport codec", () => {
     expect(isTagged(longTagged)).toBe(true);
     expect(decodeScope(longTagged).actor).toEqual({ type: "user", id: "usr_42" });
 
-    // Comment whose opening `/*` falls before the last 4096 chars is outside the tail window.
-    const oversizedComment = `SELECT 1 /*${"a".repeat(4100)},auditstream='${validTag}'*/`;
+    // Comment whose opening `/*` falls before the last 4096 Unicode code points is outside the tail window
+    // (must use valid sqlcommenter syntax so rejection genuinely tests isWithinTailWindow, not body parsing).
+    const oversizedComment = `SELECT 1 /*note='${"a".repeat(4100)}',auditstream='${validTag}'*/`;
     expect(isTagged(oversizedComment)).toBe(false);
     expect(decodeScope(oversizedComment).actorSource).toBeNull();
+
+    // Exact 4096 vs 4097 Unicode code-point tail window boundary with astral emoji (2 UTF-16 code units
+    // each) so UTF-16 length exceeds 4096 and exercises the code-point walk in isWithinTailWindow().
+    // Wrapper `/*note='',auditstream='<39-char validTag>'*/` has 65 ASCII chars:
+    //   65 + 4031 emoji = 4096 code points (8127 UTF-16 code units) -> inside window.
+    //   65 + 4032 emoji = 4097 code points (8129 UTF-16 code units) -> outside window.
+    //   65 + 4100 emoji = 4165 code points (8265 UTF-16 code units > 8192) -> fast-path outside window.
+    const astralExact4096 = `SELECT 1 /*note='${"🚀".repeat(4031)}',auditstream='${validTag}'*/`;
+    expect(astralExact4096.length - astralExact4096.indexOf("/*")).toBe(8127);
+    expect(isTagged(astralExact4096)).toBe(true);
+    expect(decodeScope(astralExact4096).actor).toEqual({ type: "user", id: "usr_42" });
+
+    const astral4097 = `SELECT 1 /*note='${"🚀".repeat(4032)}',auditstream='${validTag}'*/`;
+    expect(astral4097.length - astral4097.indexOf("/*")).toBe(8129);
+    expect(isTagged(astral4097)).toBe(false);
+    expect(decodeScope(astral4097).actorSource).toBeNull();
+
+    const astralOver8192Units = `SELECT 1 /*note='${"🚀".repeat(4100)}',auditstream='${validTag}'*/`;
+    expect(isTagged(astralOver8192Units)).toBe(false);
+    expect(decodeScope(astralOver8192Units).actorSource).toBeNull();
   });
 
   it("decodeScope enforces full Spec 0.1.0 actor and context validation while preserving unknown keys", () => {
@@ -436,5 +484,869 @@ describe("@auditstream/node transport codec", () => {
       context: { requestId: "r1", futureCtx: 42 },
       actorSource: "comment",
     });
+  });
+
+  it("rejects prototype-hijacking keys (__proto__, constructor, prototype) in decodeScope and canonical encoders", async () => {
+    const toRawCommentSql = (rawJson: string): string => {
+      const b64 = Buffer.from(rawJson, "utf8").toString("base64url");
+      return `UPDATE invoice SET status = 'ok' /*auditstream='${b64}'*/`;
+    };
+
+    const dangerousRawPayloads: readonly string[] = [
+      '{"type":"user","id":"u1","__proto__":{"tenant":"evil","polluted":true}}',
+      '{"type":"user","id":"u1","constructor":{"prototype":{"polluted":true}}}',
+      '{"type":"user","id":"u1","prototype":{"polluted":true}}',
+      '{"type":"ai_agent","id":"a1","onBehalfOf":{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}}',
+      '{"type":"ai_agent","id":"a1","onBehalfOf":{"type":"user","id":"u1","constructor":"bad"}}',
+      '{"type":"user","id":"u1","context":{"requestId":"r1","__proto__":{"source":"evil"}}}',
+      '{"type":"user","id":"u1","context":{"prototype":"bad"}}',
+      '{"type":"user","id":"u1","extra":[{"__proto__":{"polluted":true}}]}',
+      '{"type":"user","id":"u1","context":{"nested":{"constructor":{"x":1}}}}',
+      '{"type":"user","id":"u1","\\u005f\\u005fproto\\u005f\\u005f":{"tenant":"evil"}}',
+      '{"type":"user","id":"u1","\\u0063onstructor":{"x":1}}',
+      '{"type":"user","id":"u1","\\u0070rototype":{"x":1}}',
+    ];
+
+    for (const rawJson of dangerousRawPayloads) {
+      expect(decodeScope(toRawCommentSql(rawJson)), rawJson).toEqual({
+        actor: null,
+        context: null,
+        actorSource: "invalid",
+      });
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+
+    const invalidActorScopes: readonly AuditScope[] = [
+      {
+        actor: JSON.parse(
+          '{"type":"user","id":"u1","__proto__":{"tenant":"evil","toJSON":"hijack"}}',
+        ) as Actor,
+      },
+      { actor: JSON.parse('{"type":"user","id":"u1","constructor":{"x":1}}') as Actor },
+      { actor: JSON.parse('{"type":"user","id":"u1","prototype":{"x":1}}') as Actor },
+      {
+        actor: {
+          type: "ai_agent",
+          id: "a1",
+          onBehalfOf: JSON.parse(
+            '{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}',
+          ) as NestedActor,
+        },
+      },
+      {
+        actor: {
+          type: "user",
+          id: "u1",
+          extra: [JSON.parse('{"__proto__":{"x":1}}')],
+        } as unknown as Actor,
+      },
+      {
+        actor: Object.assign(Object.create({ tenant: "spoofed" }) as Record<string, unknown>, {
+          type: "user",
+          id: "u1",
+        }) as unknown as Actor,
+      },
+      {
+        actor: {
+          type: "ai_agent",
+          id: "a1",
+          onBehalfOf: Object.assign(
+            Object.create({ tenant: "spoofed" }) as Record<string, unknown>,
+            { type: "user", id: "u1" },
+          ) as unknown as NestedActor,
+        },
+      },
+    ];
+
+    for (const scope of invalidActorScopes) {
+      expect(() => encodeScope(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_ACTOR" }),
+      );
+      expect(() => setConfigValue(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_ACTOR" }),
+      );
+      expect(() => tagSql("SELECT 1", scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_ACTOR" }),
+      );
+    }
+
+    const invalidContextScopes: readonly AuditScope[] = [
+      {
+        actor: { type: "user", id: "u1" },
+        context: JSON.parse('{"requestId":"r1","__proto__":{"source":"evil"}}') as AuditContext,
+      },
+      {
+        actor: { type: "user", id: "u1" },
+        context: JSON.parse('{"constructor":{"x":1}}') as AuditContext,
+      },
+      {
+        actor: { type: "user", id: "u1" },
+        context: JSON.parse('{"nested":{"prototype":1}}') as AuditContext,
+      },
+      {
+        actor: { type: "user", id: "u1" },
+        context: Object.assign(Object.create({ source: "spoofed" }) as Record<string, unknown>, {
+          requestId: "r1",
+        }) as unknown as AuditContext,
+      },
+    ];
+
+    for (const scope of invalidContextScopes) {
+      expect(() => encodeScope(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_CONTEXT" }),
+      );
+      expect(() => setConfigValue(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_CONTEXT" }),
+      );
+      expect(() => tagSql("SELECT 1", scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_CONTEXT" }),
+      );
+    }
+
+    // Null-prototype plain objects without forbidden keys remain valid.
+    const nullProtoActor = Object.assign(Object.create(null) as Record<string, unknown>, {
+      type: "user",
+      id: "usr_null_proto",
+    }) as unknown as Actor;
+    const nullProtoContext = Object.assign(Object.create(null) as Record<string, unknown>, {
+      requestId: "req_null_proto",
+    }) as unknown as AuditContext;
+    const json = setConfigValue({ actor: nullProtoActor, context: nullProtoContext });
+    expect(json).toBe(
+      '{"type":"user","id":"usr_null_proto","context":{"requestId":"req_null_proto"}}',
+    );
+
+    // Null-prototype objects WITH forbidden keys are still rejected.
+    const badNullProtoActor = Object.create(null) as Record<string, unknown>;
+    badNullProtoActor.type = "user";
+    badNullProtoActor.id = "u1";
+    Object.defineProperty(badNullProtoActor, "__proto__", {
+      value: { tenant: "evil" },
+      enumerable: true,
+    });
+    expect(() => encodeScope({ actor: badNullProtoActor as unknown as Actor })).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+
+    // Export record parser sharing isValidActorObject/isValidContextObject also rejects forbidden keys.
+    const baseExportRecord = {
+      schema_version: 1,
+      id: "1",
+      event_id: "019a0000-0000-7000-8000-000000000001",
+      occurred_at: "2026-11-25T10:00:00.000000Z",
+      xact_id: "100",
+      source: "db",
+      op: "UPDATE",
+      schema_name: "public",
+      table_name: "invoice",
+      table_oid: 16384,
+      record_id: { id: "inv_1" },
+      before: { status: "open" },
+      after: { status: "paid" },
+      changed: ["status"],
+      actor: { type: "user", id: "u1" },
+      actor_source: "comment",
+      context: { requestId: "req_1" },
+      db_user: "app_user",
+    };
+    expect(() => parseExportRecord(JSON.stringify(baseExportRecord))).not.toThrow();
+
+    const protoActorLine = JSON.stringify(baseExportRecord).replace(
+      '"actor":{"type":"user","id":"u1"}',
+      '"actor":{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}',
+    );
+    const protoContextLine = JSON.stringify(baseExportRecord).replace(
+      '"context":{"requestId":"req_1"}',
+      '"context":{"requestId":"req_1","constructor":{"x":1}}',
+    );
+    expect(() => parseExportRecord(protoActorLine)).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_RECORD",
+        message: expect.stringContaining("actor must be null or conform"),
+      }),
+    );
+    expect(() => parseExportRecord(protoContextLine)).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_RECORD",
+        message: expect.stringContaining("context must be null or a JSON object"),
+      }),
+    );
+
+    // Valid decoded actor always has clean Object.prototype and no inherited fields.
+    const cleanDecoded = decodeScope(toRawCommentSql('{"type":"user","id":"u1"}'));
+    expect(cleanDecoded.actorSource).toBe("comment");
+    expect(cleanDecoded.actor).not.toBeNull();
+    expect(Object.getPrototypeOf(cleanDecoded.actor)).toBe(Object.prototype);
+    expect(Object.hasOwn(cleanDecoded.actor as object, "tenant")).toBe(false);
+
+    // Array Symbol.iterator bypass, array expando __proto__ bypass, and sparse-array DoS must all be handled safely.
+    const sneakyArray = [JSON.parse('{"__proto__":{"polluted":true}}')];
+    Object.defineProperty(sneakyArray, Symbol.iterator, {
+      value: () => ({ next: () => ({ done: true, value: undefined }) }),
+    });
+    const expandoArray: unknown[] = [1];
+    Object.defineProperty(expandoArray, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    expect(() =>
+      setConfigValue({ actor: { type: "user", id: "u1", extra: sneakyArray } as unknown as Actor }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+    expect(() =>
+      setConfigValue({
+        actor: { type: "user", id: "u1", extra: expandoArray } as unknown as Actor,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+
+    // Non-enumerable onBehalfOf with __proto__ and throwing row getters must be rejected by audit.history()
+    // via isValidActorObject() / isValidContextObject() as INVALID_RECORD (never raw Error).
+    const hiddenOboActor: Record<string, unknown> = { type: "ai_agent", id: "a1" };
+    Object.defineProperty(hiddenOboActor, "onBehalfOf", {
+      value: JSON.parse('{"type":"user","id":"u1","__proto__":{"polluted":true}}'),
+      enumerable: false,
+    });
+    const throwingRowActor: Record<string, unknown> = {
+      type: "user",
+      id: "u1",
+      get boom(): string {
+        throw new Error("row getter boom");
+      },
+    };
+    const throwingRowContext: Record<string, unknown> = {
+      requestId: "r1",
+      get boom(): string {
+        throw new Error("ctx getter boom");
+      },
+    };
+    const makeRow = (actor: unknown, context: unknown = null) => ({
+      id: "1",
+      event_id: "019a0000-0000-7000-8000-000000000001",
+      occurred_at: "2026-11-25T10:00:00.000000Z",
+      xact_id: "100",
+      source: "db",
+      op: "UPDATE",
+      schema_name: "public",
+      table_name: "invoice",
+      table_oid: 16384,
+      record_id: { id: "inv_1" },
+      before: { status: "open" },
+      after: { status: "paid" },
+      changed: ["status"],
+      actor,
+      actor_source: "comment",
+      context,
+      db_user: "app_user",
+      schema_version: 1,
+    });
+    const historyQuery = { table: "invoice", recordId: { id: "inv_1" } };
+    await expect(
+      audit.history(() => ({ rows: [makeRow({ type: "user", id: "u1" })] }), historyQuery),
+    ).resolves.toHaveLength(1);
+    await expect(
+      audit.history(() => ({ rows: [makeRow(hiddenOboActor)] }), historyQuery),
+    ).rejects.toMatchObject({
+      name: "AuditstreamError",
+      code: "INVALID_RECORD",
+      message: expect.stringContaining("actor must be null or conform"),
+    });
+    await expect(
+      audit.history(() => ({ rows: [makeRow(throwingRowActor)] }), historyQuery),
+    ).rejects.toMatchObject({
+      name: "AuditstreamError",
+      code: "INVALID_RECORD",
+      message: expect.stringContaining("actor must be null or conform"),
+    });
+    await expect(
+      audit.history(
+        () => ({ rows: [makeRow({ type: "user", id: "u1" }, throwingRowContext)] }),
+        historyQuery,
+      ),
+    ).rejects.toMatchObject({
+      name: "AuditstreamError",
+      code: "INVALID_RECORD",
+      message: expect.stringContaining("context must be null or a JSON object"),
+    });
+
+    // Mutating returned absent/invalid decode objects must never poison subsequent calls.
+    const absentResult = decodeScope("SELECT 1") as unknown as Record<string, unknown>;
+    absentResult.actorSource = "comment";
+    absentResult.actor = { type: "user", id: "hijacked" };
+    expect(decodeScope("SELECT 2")).toEqual({ actor: null, context: null, actorSource: null });
+    expect(isTagged("SELECT 2")).toBe(false);
+
+    const invalidResult = decodeScope("SELECT 1 /*auditstream='bad'*/") as unknown as Record<
+      string,
+      unknown
+    >;
+    invalidResult.actorSource = "comment";
+    expect(decodeScope("SELECT 2 /*auditstream='bad'*/")).toEqual({
+      actor: null,
+      context: null,
+      actorSource: "invalid",
+    });
+
+    // toJSON() methods on actor, onBehalfOf, or context must not hijack serialization,
+    // and circular / BigInt extension values must throw AuditstreamError (never uncaught TypeError).
+    const circularActor: Record<string, unknown> = { type: "user", id: "u1" };
+    circularActor.self = circularActor;
+    const circularContext: Record<string, unknown> = { requestId: "r1" };
+    circularContext.self = circularContext;
+
+    const hijackActorScopes: readonly AuditScope[] = [
+      {
+        actor: {
+          type: "user",
+          id: "u1",
+          toJSON: () => ({ type: "service", id: "spoofed" }),
+        } as unknown as Actor,
+      },
+      {
+        actor: { type: "user", id: "u1", toJSON: () => null } as unknown as Actor,
+      },
+      {
+        actor: { type: "user", id: "u1", toJSON: () => undefined } as unknown as Actor,
+      },
+      {
+        actor: {
+          type: "ai_agent",
+          id: "a1",
+          onBehalfOf: {
+            type: "user",
+            id: "u1",
+            toJSON: () => ({ type: "bot", id: "" }),
+          },
+        } as unknown as Actor,
+      },
+      {
+        actor: {
+          type: "user",
+          id: "u1",
+          extra: { toJSON: () => JSON.parse('{"__proto__":{"x":1}}') },
+        } as unknown as Actor,
+      },
+      { actor: circularActor as unknown as Actor },
+      { actor: { type: "user", id: "u1", big: 1n } as unknown as Actor },
+    ];
+
+    for (const scope of hijackActorScopes) {
+      expect(() => setConfigValue(scope)).toThrowError(AuditstreamError);
+      expect(() => setConfigValue(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_ACTOR" }),
+      );
+      expect(() => encodeScope(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_ACTOR" }),
+      );
+    }
+
+    let oneShotThrew = false;
+    const oneShotContext = {
+      requestId: "r1",
+      extra: {
+        toJSON(): string {
+          if (!oneShotThrew) {
+            oneShotThrew = true;
+            throw new Error("one-shot context failure");
+          }
+          return "ok";
+        },
+      },
+    } as unknown as AuditContext;
+
+    const hijackContextScopes: readonly AuditScope[] = [
+      {
+        actor: { type: "user", id: "u1" },
+        context: {
+          requestId: "r1",
+          toJSON: () => "not-an-object",
+        } as unknown as AuditContext,
+      },
+      {
+        actor: { type: "user", id: "u1" },
+        context: circularContext as unknown as AuditContext,
+      },
+      {
+        actor: { type: "user", id: "u1" },
+        context: { requestId: "r1", big: 1n } as unknown as AuditContext,
+      },
+      {
+        actor: { type: "user", id: "u1" },
+        context: oneShotContext,
+      },
+    ];
+
+    let oneShotActorThrew = false;
+    const oneShotActorScope: AuditScope = {
+      actor: {
+        type: "user",
+        id: "u1",
+        extra: {
+          toJSON(): string {
+            if (!oneShotActorThrew) {
+              oneShotActorThrew = true;
+              throw new Error("one-shot actor failure");
+            }
+            return "ok";
+          },
+        },
+      } as unknown as Actor,
+      context: { requestId: "r1" },
+    };
+    expect(() => setConfigValue(oneShotActorScope)).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+
+    // Throwing getters in actor/context and non-object scope must convert to AuditstreamError.
+    const throwingActorGetter = {
+      type: "user",
+      id: "u1",
+      extra: {
+        get boom(): string {
+          throw new Error("actor getter boom");
+        },
+      },
+    } as unknown as Actor;
+    const throwingContextGetter = {
+      requestId: "r1",
+      extra: {
+        get boom(): string {
+          throw new Error("context getter boom");
+        },
+      },
+    } as unknown as AuditContext;
+    expect(() => setConfigValue({ actor: throwingActorGetter })).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+    expect(() =>
+      setConfigValue({ actor: { type: "user", id: "u1" }, context: throwingContextGetter }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_CONTEXT" }));
+    const protoBoom = new Proxy(
+      { type: "user", id: "u1" },
+      {
+        getPrototypeOf(): never {
+          throw new Error("getPrototypeOf boom");
+        },
+      },
+    );
+    const { proxy: revokedProxy, revoke: revokeProxy } = Proxy.revocable(
+      { type: "user", id: "u1" },
+      {},
+    );
+    revokeProxy();
+
+    expect(() => setConfigValue({ actor: protoBoom as unknown as Actor })).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+    expect(() => setConfigValue({ actor: revokedProxy as unknown as Actor })).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+    expect(() =>
+      setConfigValue({
+        actor: { type: "user", id: "u1" },
+        context: protoBoom as unknown as AuditContext,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_CONTEXT" }));
+    expect(() =>
+      setConfigValue({
+        actor: { type: "user", id: "u1" },
+        context: revokedProxy as unknown as AuditContext,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_CONTEXT" }));
+    expect(() =>
+      setConfigValue({
+        get actor(): Actor {
+          throw new Error("scope.actor boom");
+        },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+    expect(() =>
+      setConfigValue({
+        actor: { type: "user", id: "u1" },
+        get context(): AuditContext {
+          throw new Error("scope.context boom");
+        },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_CONTEXT" }));
+
+    // Non-enumerable throwing getter on a known key reaches readOwnPropertySafe() catch branch.
+    const nonEnumThrowingTenant: Record<string, unknown> = { type: "user", id: "u1" };
+    Object.defineProperty(nonEnumThrowingTenant, "tenant", {
+      enumerable: false,
+      get(): string {
+        throw new Error("non-enumerable tenant boom");
+      },
+    });
+    expect(() => setConfigValue({ actor: nonEnumThrowingTenant as unknown as Actor })).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+
+    // Primitive/null leaves alongside a valid \u escape and a context without 'e'/'E' stay valid.
+    const mixedLeaves = setConfigValue({
+      actor: {
+        type: "user",
+        id: "ok",
+        count: 1,
+        extra: { n: 1, z: null, s: "\\u0041" },
+      } as unknown as Actor,
+      context: { ip: "1.2.3.4" },
+    });
+    expect(mixedLeaves).toContain('"ip":"1.2.3.4"');
+
+    expect(() => encodeScope(null as unknown as AuditScope)).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+    expect(() => setConfigValue(null as unknown as AuditScope)).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+    expect(() => tagSql("SELECT 1", null as unknown as AuditScope)).toThrowError(
+      expect.objectContaining({ code: "INVALID_ACTOR" }),
+    );
+
+    for (const scope of hijackContextScopes) {
+      expect(() => setConfigValue(scope)).toThrowError(
+        expect.objectContaining({ code: "INVALID_CONTEXT" }),
+      );
+    }
+  });
+
+  it("tagSql inserts a newline after trailing -- line comments and respects PostgreSQL quoting/nesting", async () => {
+    const scope: AuditScope = { actor: { type: "user", id: "usr_42" } };
+    const encoded = encodeScope(scope);
+    const otherTag = encodeScope({ actor: { type: "user", id: "usr_fake" } });
+
+    const trailingLineCommentQueries = [
+      "SELECT 1 -- user note",
+      "SELECT 1 --",
+      `SELECT 1 -- /*auditstream='${otherTag}'*/`,
+      `SELECT 1 /*auditstream='${otherTag}'*/ -- trailing comment`,
+      "SELECT $1 -- positional parameter is not dollar-quote",
+      "SELECT $foo -- unclosed dollar tag is not dollar-quote",
+      "SELECT col$a$ FROM t -- ident dollar is not dollar-quote",
+      "SELECT 'backslash \\' -- standard_conforming_strings ends string here",
+      "SELECT E'\\\\' -- E-string ended after escaped backslash",
+      "SELECT E'a'\n'b\\' ' || 'x' -- trailing comment after E-string quotecontinue",
+      "SELECT E'a' -- join\n'b\\' ' || 'x' -- trailing comment after commented E-string continuation",
+      'SELECT "col" -- after double-quoted ident',
+      "SELECT 1 /* block */ -- line after block",
+    ];
+
+    for (const sql of trailingLineCommentQueries) {
+      expect(isTagged(sql), `isTagged(${sql})`).toBe(false);
+      expect(decodeScope(sql), `decodeScope(${sql})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: null,
+      });
+
+      const tagged = tagSql(sql, scope);
+      expect(tagged, `tagSql(${sql})`).toBe(`${sql}\n/*auditstream='${encoded}'*/`);
+      expect(isTagged(tagged), `isTagged(tagged: ${sql})`).toBe(true);
+      expect(decodeScope(tagged), `decodeScope(tagged: ${sql})`).toEqual({
+        actor: { type: "user", id: "usr_42" },
+        context: null,
+        actorSource: "comment",
+      });
+      // Calling tagSql again must not double-tag.
+      expect(tagSql(tagged, scope)).toBe(tagged);
+    }
+
+    // Verify cached audit.as() scopes handle both orderings (trailing -- first, and normal first
+    // so cached.commentSuffix is populated before tagging a trailing -- query or already-tagged query).
+    await audit.as(scope.actor, () => {
+      expect(tagSql("SELECT 1 -- cached")).toBe(`SELECT 1 -- cached\n/*auditstream='${encoded}'*/`);
+      expect(tagSql("SELECT 1")).toBe(`SELECT 1 /*auditstream='${encoded}'*/`);
+    });
+    await audit.as(scope.actor, () => {
+      const normalTagged = tagSql("SELECT 1");
+      expect(normalTagged).toBe(`SELECT 1 /*auditstream='${encoded}'*/`);
+      expect(tagSql("SELECT 1 -- after cached suffix")).toBe(
+        `SELECT 1 -- after cached suffix\n/*auditstream='${encoded}'*/`,
+      );
+      expect(tagSql(normalTagged)).toBe(normalTagged);
+    });
+
+    const nonTrailingLineCommentQueries = [
+      "SELECT 1 -- closed with LF\n",
+      "SELECT 1 -- closed with CR\r",
+      "SELECT '-- inside single quotes'",
+      "SELECT 'it''s -- still in single quotes'",
+      "SELECT E'escaped \\' -- still in E-string'",
+      "SELECT E'it''s -- doubled quote still in E-string'",
+      'SELECT "col--name" FROM t',
+      'SELECT "a""--b" FROM t',
+      "SELECT $$-- inside dollar quote$$",
+      "SELECT $tag$-- inside tagged dollar quote$tag$",
+      "SELECT $a$ $b$ -- inside $a$",
+      "SELECT 1 /* -- inside block comment */",
+      "SELECT 1 /* outer /* inner */ -- still in outer block */",
+    ];
+
+    for (const sql of nonTrailingLineCommentQueries) {
+      expect(isTagged(sql), `isTagged(${sql})`).toBe(false);
+      const tagged = tagSql(sql, scope);
+      expect(tagged, `tagSql(${sql})`).toBe(`${sql} /*auditstream='${encoded}'*/`);
+      expect(isTagged(tagged)).toBe(true);
+      expect(decodeScope(tagged).actor).toEqual({ type: "user", id: "usr_42" });
+    }
+  });
+
+  it("isTagged and decodeScope enforce lexical sqlcommenter parsing without suppressing tagging", () => {
+    const validTag = "eyJ0eXBlIjoidXNlciIsImlkIjoidXNyXzQyIn0";
+    const activeScope: AuditScope = { actor: { type: "user", id: "usr_real" } };
+
+    // Embedded `,auditstream='` in other sqlcommenter values, free-form comments, malformed pairs,
+    // or nested/unclosed contexts MUST NOT suppress tagging.
+    const nonTaggedQueries = [
+      "SELECT 1 /*route='foo,auditstream=',other='bar'*/",
+      "SELECT 1 /*note='hello,auditstream=''abc'''*/",
+      `SELECT 1 /* free text ,auditstream='${validTag}' */`,
+      `SELECT 1 /*garbage,auditstream='${validTag}'*/`,
+      `SELECT 1 /*auditstream='${validTag}',*/`,
+      `SELECT 1 /*,auditstream='${validTag}'*/`,
+      `SELECT 1 /*auditstream='${validTag}',auditstream='${validTag}',garbage*/`,
+      `SELECT 1 /* outer /*auditstream='${validTag}'*/ */`,
+    ];
+
+    for (const sql of nonTaggedQueries) {
+      expect(isTagged(sql), `isTagged(${sql})`).toBe(false);
+      expect(decodeScope(sql), `decodeScope(${sql})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: null,
+      });
+      const tagged = tagSql(sql, activeScope);
+      expect(tagged).not.toBe(sql);
+      expect(decodeScope(tagged).actor).toEqual({ type: "user", id: "usr_real" });
+    }
+
+    // Comment-like text inside unterminated string, escape-string, or dollar-quoted literals is not a trailing comment.
+    for (const unterminated of [
+      `SELECT 'unclosed /*auditstream='${validTag}'*/`,
+      `SELECT E'unclosed /*auditstream='${validTag}'*/`,
+      `SELECT $$unclosed /*auditstream='${validTag}'*/`,
+    ]) {
+      expect(isTagged(unterminated), `isTagged(${unterminated})`).toBe(false);
+      expect(decodeScope(unterminated), `decodeScope(${unterminated})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: null,
+      });
+    }
+
+    // Structurally or semantically invalid auditstream tag values (padded, >683 chars, len%4===1,
+    // duplicate key, non-JSON, invalid UTF-8, invalid actor schema, or earlier `,auditstream=`
+    // value colliding with PG resolve_actor()'s strpos()) do not suppress tagging (isTagged === false)
+    // while decodeScope reports invalid.
+    const invalidAuditstreamTags = [
+      `SELECT 1 /*auditstream='${validTag}='*/`,
+      `SELECT 1 /*auditstream='${"a".repeat(684)}'*/`,
+      "SELECT 1 /*auditstream='a'*/",
+      `SELECT 1 /*auditstream='${validTag}',auditstream='${validTag}'*/`,
+      `UPDATE invoice SET status = 'ok' /*x='foo,auditstream=',auditstream='${validTag}'*/`,
+      `UPDATE invoice SET status = 'ok' /*x='O\\'Reilly,auditstream=',auditstream='${validTag}'*/`,
+      "SELECT 1 /*auditstream='bm90IGpzb24'*/",
+      "SELECT 1 /*auditstream='__79'*/",
+      "SELECT 1 /*auditstream='eyJ0eXBlIjoiYm90IiwiaWQiOiJiMSJ9'*/",
+    ];
+
+    for (const sql of invalidAuditstreamTags) {
+      expect(isTagged(sql), `isTagged(${sql})`).toBe(false);
+      expect(decodeScope(sql), `decodeScope(${sql})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: "invalid",
+      });
+      const tagged = tagSql(sql, activeScope);
+      expect(isTagged(tagged)).toBe(true);
+      expect(decodeScope(tagged).actor).toEqual({ type: "user", id: "usr_real" });
+    }
+
+    // Valid sqlcommenter with a comma inside another quoted value, Drizzle 1.x / Prisma 7
+    // encodeURIComponent key chars (`.`, `%`, `!`, `~`, `*`, `(`, `)`, `\'`), escaped apostrophes
+    // (`\'`) and backslashes (`\\`), literal trailing `\`, or multi-line E'...' quotecontinue
+    // all recognize auditstream.
+    for (const validSql of [
+      `SELECT 1 /*route='a,b',auditstream='${validTag}'*/`,
+      `SELECT 1 /*app.route='%2Fusers',auditstream='${validTag}'*/`,
+      `SELECT 1 /*k%2520v='1',auditstream='${validTag}'*/`,
+      `SELECT 1 /*app~1='v',auditstream='${validTag}'*/`,
+      `SELECT 1 /*k!*(x)='v',auditstream='${validTag}'*/`,
+      `SELECT 1 /*a\\'b='v',auditstream='${validTag}'*/`,
+      `SELECT 1 /*auditstream='${validTag}',route='O\\'Reilly'*/`,
+      `SELECT 1 /*route='O\\'Reilly',auditstream='${validTag}'*/`,
+      `SELECT 1 /*route='O\\'Reilly',path='a\\\\',auditstream='${validTag}'*/`,
+      `SELECT 1 /*route='foo\\\\',auditstream='${validTag}'*/`,
+      `SELECT 1 /*x='foo\\',auditstream='${validTag}'*/`,
+      `SELECT 1 /*auditstream='${validTag}',x='foo\\'*/`,
+      `SELECT 1 /*x='a\\',b='c',auditstream='${validTag}'*/`,
+      `SELECT E'a'\n'b\\' ' || 'x' /*auditstream='${validTag}'*/`,
+      `SELECT 1 -- note\n/*auditstream='${validTag}'*/;`,
+    ]) {
+      expect(isTagged(validSql), `isTagged(${validSql})`).toBe(true);
+      expect(decodeScope(validSql), `decodeScope(${validSql})`).toEqual({
+        actor: { type: "user", id: "usr_42" },
+        context: null,
+        actorSource: "comment",
+      });
+    }
+  });
+
+  it("decodeScope rejects NUL and unpaired UTF-16 surrogates even inside shadowed duplicate JSON keys", () => {
+    const toRawCommentSql = (rawJson: string): string => {
+      const b64 = Buffer.from(rawJson, "utf8").toString("base64url");
+      return `UPDATE invoice SET status = 'ok' /*auditstream='${b64}'*/`;
+    };
+
+    for (const rawJson of [
+      '{"id":"bad\\u0000","id":"u1","type":"user"}',
+      '{"x":"\\u0000","x":"ok","type":"user","id":"u1"}',
+      '{"k\\u0000":"v","type":"user","id":"u1"}',
+      '{"x":"\\ud800","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\udfff","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\udfff\\ud800","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\ud83d\\ude80\\ud800","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\ud83d\\ud83d\\ude80","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\ud83d😀","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\ud83d\\u0041","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\uD800","x":"ok","type":"user","id":"u1"}',
+      '{"x":"a\\\\\\u0000","x":"ok","type":"user","id":"u1"}',
+      '{"x":"\\"\\u0000","x":"ok","type":"user","id":"u1"}',
+    ]) {
+      expect(decodeScope(toRawCommentSql(rawJson)), rawJson).toEqual({
+        actor: null,
+        context: null,
+        actorSource: "invalid",
+      });
+    }
+
+    // Valid surrogate pair + literal escaped \\u0000 / \\ud800 inside shadowed duplicate key stays valid.
+    const validRaw = '{"x":"\\ud83d\\ude80\\\\u0000\\\\ud800","x":"ok","type":"user","id":"u1"}';
+    expect(decodeScope(toRawCommentSql(validRaw))).toEqual({
+      actor: { type: "user", id: "u1", x: "ok" },
+      context: null,
+      actorSource: "comment",
+    });
+  });
+
+  it("decodeScope and isTagged reject UTF-8 BOM and PostgreSQL numeric-overflow JSON numbers", () => {
+    const activeScope: AuditScope = { actor: { type: "user", id: "usr_real" } };
+    const toRawCommentSql = (rawJson: string): string => {
+      const b64 = Buffer.from(rawJson, "utf8").toString("base64url");
+      return `UPDATE invoice SET status = 'paid' /*auditstream='${b64}'*/`;
+    };
+
+    // Leading UTF-8 BOM (0xEF 0xBB 0xBF) is preserved by PostgreSQL convert_from() and rejected by ::jsonb.
+    const bomBytes = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('{"type":"user","id":"u1"}', "utf8"),
+    ]);
+    const bomSql = `UPDATE invoice SET status = 'paid' /*auditstream='${bomBytes.toString("base64url")}'*/`;
+    expect(isTagged(bomSql)).toBe(false);
+    expect(decodeScope(bomSql)).toEqual({
+      actor: null,
+      context: null,
+      actorSource: "invalid",
+    });
+    expect(decodeScope(tagSql(bomSql, activeScope)).actor).toEqual({
+      type: "user",
+      id: "usr_real",
+    });
+
+    // JSON numbers overflowing PostgreSQL numeric (weight > 32767, dscale > 16383, or |exp| >= INT_MAX/2),
+    // including inside shadowed duplicate keys, must yield actorSource: "invalid" and isTagged === false.
+    for (const rawJson of [
+      '{"type":"user","id":"u1","x":1e1000000}',
+      '{"type":"user","id":"u1","x":1e131072}',
+      '{"type":"user","id":"u1","x":-1e131072}',
+      '{"type":"user","id":"u1","x":0.0001e131076}',
+      '{"type":"user","id":"u1","x":1e-16384}',
+      '{"type":"user","id":"u1","x":0.1e-16383}',
+      '{"type":"user","id":"u1","x":0e-16384}',
+      '{"type":"user","id":"u1","x":0e1073741823}',
+      '{"x":1e1000000,"x":1,"type":"user","id":"u1"}',
+    ]) {
+      const sql = toRawCommentSql(rawJson);
+      expect(isTagged(sql), `isTagged(${rawJson})`).toBe(false);
+      expect(decodeScope(sql), `decodeScope(${rawJson})`).toEqual({
+        actor: null,
+        context: null,
+        actorSource: "invalid",
+      });
+      expect(decodeScope(tagSql(sql, activeScope)).actor).toEqual({
+        type: "user",
+        id: "usr_real",
+      });
+    }
+
+    // In-range scientific notation (at exact PG numeric boundaries) remains valid.
+    for (const rawJson of [
+      '{"type":"user","id":"u1","x":1e131071}',
+      '{"type":"user","id":"u1","x":0.0001e131075}',
+      '{"type":"user","id":"u1","x":1e-16383}',
+      '{"type":"user","id":"u1","x":0e1000000}',
+      '{"type":"user","id":"u1","x":-42.5E10,"note":"1e999999"}',
+    ]) {
+      const sql = toRawCommentSql(rawJson);
+      expect(isTagged(sql), `isTagged(${rawJson})`).toBe(true);
+      expect(decodeScope(sql).actorSource, `decodeScope(${rawJson})`).toBe("comment");
+    }
+
+    // Encoders also reject PostgreSQL-overflowing JSON.rawJSON() numbers so encodeScope/setConfigValue/tagSql
+    // never emit payloads that decodeScope() / PostgreSQL reject (which would also cause tagSql double-tagging).
+    const rawJsonFn = (JSON as unknown as { rawJSON?: (text: string) => unknown }).rawJSON;
+    if (typeof rawJsonFn === "function") {
+      for (const badNum of ["1e1000000", "1e131072", "1e-16384", "0e1073741823"]) {
+        expect(() =>
+          setConfigValue({
+            actor: { type: "user", id: "u1", n: rawJsonFn(badNum) } as unknown as Actor,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+        expect(() =>
+          setConfigValue({
+            actor: {
+              type: "ai_agent",
+              id: "a1",
+              onBehalfOf: { type: "user", id: "u1", n: rawJsonFn(badNum) },
+            } as unknown as Actor,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+        expect(() =>
+          setConfigValue({
+            actor: { type: "user", id: "u1" },
+            context: { requestId: "r1", n: rawJsonFn(badNum) } as unknown as AuditContext,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "INVALID_CONTEXT" }));
+        expect(() =>
+          tagSql("SELECT 1", {
+            actor: {
+              type: "user",
+              id: "u1",
+              n: { toJSON: () => rawJsonFn(badNum) },
+            } as unknown as Actor,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+      }
+      // Raw and mixed (raw + escaped) unpaired UTF-16 surrogates in JSON.rawJSON() must also reject.
+      for (const badRawStr of ['"\ud800"', '"\udfff"', '"\ud800\\udc00"', '"\\ud83d\ude80"']) {
+        expect(() =>
+          setConfigValue({
+            actor: { type: "user", id: "u1", x: rawJsonFn(badRawStr) } as unknown as Actor,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "INVALID_ACTOR" }));
+        expect(() =>
+          tagSql("SELECT 1", {
+            actor: { type: "user", id: "u1" },
+            context: { requestId: "r1", x: rawJsonFn(badRawStr) } as unknown as AuditContext,
+          }),
+        ).toThrowError(expect.objectContaining({ code: "INVALID_CONTEXT" }));
+      }
+
+      // Valid boundary JSON.rawJSON() numbers round-trip cleanly without double-tagging.
+      const validRawScope: AuditScope = {
+        actor: { type: "user", id: "u1", n: rawJsonFn("1e131071") } as unknown as Actor,
+      };
+      const once = tagSql("SELECT 1", validRawScope);
+      expect(isTagged(once)).toBe(true);
+      expect(tagSql(once, validRawScope)).toBe(once);
+    }
   });
 });

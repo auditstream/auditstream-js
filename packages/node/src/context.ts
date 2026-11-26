@@ -175,8 +175,213 @@ export function getCachedScopePayload(scope: AuditScope): CachedScopePayload | u
   return scopeCache.get(scope);
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const FORBIDDEN_OBJECT_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+/**
+ * Internal check accepting plain objects (`Object.prototype` or `null` prototype) while
+ * rejecting arrays, primitives, built-ins, and custom prototype chains.
+ */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  try {
+    if (Array.isArray(value)) {
+      return false;
+    }
+    const proto: unknown = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  } catch {
+    return false;
+  }
+}
+
+/** Internal code-point lookup returning `-1` when `index` is out of bounds. */
+export function codeAt(text: string, index: number): number {
+  return text.codePointAt(index) ?? -1;
+}
+
+const PG_NUMERIC_MAX_DSCALE = 16_383;
+const PG_NUMERIC_MAX_MSD_POS = 131_071; // floor(131071 / 4) === NUMERIC_WEIGHT_MAX (32767)
+const PG_NUMERIC_EXP_LIMIT = 1_073_741_823; // INT_MAX / 2 in PostgreSQL numeric.c
+
+function isJsonNumberStartCode(code: number): boolean {
+  return code === 0x2d || (code >= 0x30 && code <= 0x39);
+}
+
+function isJsonNumberContCode(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) ||
+    code === 0x2e ||
+    code === 0x65 ||
+    code === 0x45 ||
+    code === 0x2b ||
+    code === 0x2d
+  );
+}
+
+function findMostSignificantDigitPos(intPart: string, fracPart: string): number | null {
+  for (let i = 0; i < intPart.length; i++) {
+    if (codeAt(intPart, i) !== 0x30) {
+      return intPart.length - 1 - i;
+    }
+  }
+  for (let i = 0; i < fracPart.length; i++) {
+    if (codeAt(fracPart, i) !== 0x30) {
+      return -(i + 1);
+    }
+  }
+  return null;
+}
+
+function isPgNumericOverflowToken(token: string): boolean {
+  let eIdx = token.indexOf("e");
+  if (eIdx === -1) {
+    eIdx = token.indexOf("E");
+  }
+  if (eIdx === -1) {
+    return false;
+  }
+  const expVal = Number(token.slice(eIdx + 1));
+  if (!Number.isSafeInteger(expVal) || Math.abs(expVal) >= PG_NUMERIC_EXP_LIMIT) {
+    return true;
+  }
+  const mantissaStart = codeAt(token, 0) === 0x2d ? 1 : 0;
+  const mantissa = token.slice(mantissaStart, eIdx);
+  const dotIdx = mantissa.indexOf(".");
+  const intPart = dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx);
+  const fracPart = dotIdx === -1 ? "" : mantissa.slice(dotIdx + 1);
+
+  if (Math.max(0, fracPart.length - expVal) > PG_NUMERIC_MAX_DSCALE) {
+    return true;
+  }
+  const msdPos = findMostSignificantDigitPos(intPart, fracPart);
+  return msdPos !== null && msdPos + expVal > PG_NUMERIC_MAX_MSD_POS;
+}
+
+function skipJsonString(raw: string, quoteIndex: number): number {
+  let i = quoteIndex + 1;
+  while (i < raw.length) {
+    const c = codeAt(raw, i);
+    if (c === 0x5c) {
+      i += 2;
+    } else if (c === 0x22) {
+      return i + 1;
+    } else {
+      i += 1;
+    }
+  }
+  return raw.length;
+}
+
+function readJsonNumberEnd(raw: string, start: number): number {
+  let i = start + 1;
+  while (i < raw.length && isJsonNumberContCode(codeAt(raw, i))) {
+    i += 1;
+  }
+  return i;
+}
+
+/**
+ * Scans valid raw JSON text (including overwritten duplicate keys and `JSON.rawJSON()` literals)
+ * for numeric tokens that overflow PostgreSQL's `jsonb` / `numeric` limits
+ * (`NUMERIC_WEIGHT_MAX = 32767`, `NUMERIC_DSCALE_MAX = 16383`, or `|exp| >= INT_MAX / 2`).
+ */
+export function rawJsonHasOverflowNumber(raw: string): boolean {
+  if (!raw.includes("e") && !raw.includes("E")) {
+    return false;
+  }
+  let i = 0;
+  while (i < raw.length) {
+    const ch = codeAt(raw, i);
+    if (ch === 0x22) {
+      i = skipJsonString(raw, i);
+    } else if (isJsonNumberStartCode(ch)) {
+      const end = readJsonNumberEnd(raw, i);
+      if (isPgNumericOverflowToken(raw.slice(i, end))) {
+        return true;
+      }
+      i = end;
+    } else {
+      i += 1;
+    }
+  }
+  return false;
+}
+
+function isLargeIndexedHostObject(current: object): boolean {
+  if (ArrayBuffer.isView(current) && !(current instanceof DataView)) {
+    return current.byteLength > MAX_PAYLOAD_BYTES;
+  }
+  return current instanceof String && current.length > MAX_PAYLOAD_BYTES;
+}
+
+function hasDirectForbiddenOwnKey(current: object): boolean {
+  for (const key of FORBIDDEN_OBJECT_KEYS) {
+    if (Object.hasOwn(current, key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function pushContainerChildren(current: object, stack: unknown[]): boolean {
+  // Guard large TypedArrays/Buffers and boxed Strings so Object.keys() never materializes millions
+  // of synthetic index keys while still catching direct forbidden expando properties in O(1).
+  if (isLargeIndexedHostObject(current)) {
+    return hasDirectForbiddenOwnKey(current);
+  }
+  // Using Object.keys() on both plain objects and arrays avoids custom Array[Symbol.iterator],
+  // inspects array expando properties (such as __proto__), and skips sparse-array holes in O(populated).
+  for (const key of Object.keys(current)) {
+    if (FORBIDDEN_OBJECT_KEYS.has(key)) {
+      return true;
+    }
+    stack.push((current as Record<string, unknown>)[key]);
+  }
+  return false;
+}
+
+/**
+ * Iteratively checks whether `value` (or any nested object/array inside it) contains an own
+ * enumerable `"__proto__"`, `"constructor"`, or `"prototype"` key.
+ */
+export function hasForbiddenPrototypeKey(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const seen = new Set<object>();
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current !== "object" || current === null || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    if (pushContainerChildren(current, stack)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const KNOWN_CONTEXT_FIELDS: readonly (keyof AuditContext)[] = [
+  "requestId",
+  "source",
+  "ip",
+  "userAgent",
+];
+
+/** Internal validated core fields shared by `Actor` and `NestedActor` validators/canonicalizers. */
+export interface ValidatedActorCore {
+  readonly type: ActorType;
+  readonly id: string;
+  readonly tenant: string | undefined;
 }
 
 function assertNonEmptyString(
@@ -189,106 +394,129 @@ function assertNonEmptyString(
   }
 }
 
-function validateNestedActor(raw: unknown): NestedActor {
+/**
+ * Validates that `raw` is a plain object containing no forbidden prototype keys
+ * (`__proto__`, `constructor`, `prototype`), converting throwing getters/Proxy traps
+ * into `AuditstreamError`.
+ */
+function assertSafePlainObject(
+  raw: unknown,
+  field: string,
+  code: AuditstreamErrorCode,
+): asserts raw is Record<string, unknown> {
   if (!isPlainObject(raw)) {
-    throw new AuditstreamError("INVALID_ACTOR", "actor.onBehalfOf must be a JSON object");
+    throw new AuditstreamError(code, `${field} must be a JSON object`);
   }
-  if (typeof raw.type !== "string" || !VALID_ACTOR_TYPES.has(raw.type)) {
+  let forbidden: boolean;
+  try {
+    forbidden = hasForbiddenPrototypeKey(raw);
+  } catch {
+    throw new AuditstreamError(code, `${field} is not JSON-serializable`);
+  }
+  if (forbidden) {
     throw new AuditstreamError(
-      "INVALID_ACTOR",
-      `actor.onBehalfOf.type must be one of user, api_key, ai_agent, service, system`,
+      code,
+      `${field} must not contain __proto__, constructor, or prototype keys`,
     );
   }
-  assertNonEmptyString(raw.id, "actor.onBehalfOf.id", "INVALID_ACTOR");
-  if (raw.tenant !== undefined) {
-    assertNonEmptyString(raw.tenant, "actor.onBehalfOf.tenant", "INVALID_ACTOR");
-  }
-  if ("onBehalfOf" in raw && raw.onBehalfOf !== undefined) {
-    throw new AuditstreamError(
-      "INVALID_ACTOR",
-      "actor.onBehalfOf must not contain a nested onBehalfOf (max depth is 1)",
-    );
-  }
+}
 
-  const nested: { type: ActorType; id: string; tenant?: string } = {
-    type: raw.type as ActorType,
-    id: raw.id,
-  };
-  if (raw.tenant !== undefined) {
-    nested.tenant = raw.tenant;
+/** Safely reads an own property without walking prototypes, trapping getter exceptions. */
+export function readOwnPropertySafe(
+  obj: Record<string, unknown>,
+  key: string,
+  field: string,
+  code: AuditstreamErrorCode,
+): unknown {
+  try {
+    return Object.hasOwn(obj, key) ? obj[key] : undefined;
+  } catch {
+    throw new AuditstreamError(code, `${field} is not readable`);
+  }
+}
+
+/** Validates the shared `type`, `id`, `tenant`, and optional depth-1 `onBehalfOf` rules. */
+export function readValidatedActorCore(
+  raw: unknown,
+  field: string,
+  forbidOnBehalfOf: boolean,
+): ValidatedActorCore {
+  assertSafePlainObject(raw, field, "INVALID_ACTOR");
+  const type = readOwnPropertySafe(raw, "type", `${field}.type`, "INVALID_ACTOR");
+  if (typeof type !== "string" || !VALID_ACTOR_TYPES.has(type)) {
+    throw new AuditstreamError(
+      "INVALID_ACTOR",
+      `${field}.type must be one of user, api_key, ai_agent, service, system`,
+    );
+  }
+  const id = readOwnPropertySafe(raw, "id", `${field}.id`, "INVALID_ACTOR");
+  assertNonEmptyString(id, `${field}.id`, "INVALID_ACTOR");
+  if (
+    forbidOnBehalfOf &&
+    readOwnPropertySafe(raw, "onBehalfOf", `${field}.onBehalfOf`, "INVALID_ACTOR") !== undefined
+  ) {
+    throw new AuditstreamError(
+      "INVALID_ACTOR",
+      `${field} must not contain a nested onBehalfOf (max depth is 1)`,
+    );
+  }
+  const tenant = readOwnPropertySafe(raw, "tenant", `${field}.tenant`, "INVALID_ACTOR");
+  if (tenant !== undefined) {
+    assertNonEmptyString(tenant, `${field}.tenant`, "INVALID_ACTOR");
+  }
+  return { type: type as ActorType, id, tenant };
+}
+
+/** Validates the known context fields and returns a fresh mutable plain object in canonical order. */
+export function readValidatedKnownContext(raw: unknown): Record<string, unknown> {
+  assertSafePlainObject(raw, "context", "INVALID_CONTEXT");
+  const validated: Record<string, unknown> = {};
+  for (const key of KNOWN_CONTEXT_FIELDS) {
+    const value = readOwnPropertySafe(raw, key, `context.${key}`, "INVALID_CONTEXT");
+    if (value !== undefined) {
+      assertNonEmptyString(value, `context.${key}`, "INVALID_CONTEXT");
+      validated[key] = value;
+    }
+  }
+  return validated;
+}
+
+function validateNestedActor(raw: unknown): NestedActor {
+  const { type, id, tenant } = readValidatedActorCore(raw, "actor.onBehalfOf", true);
+  const nested: { type: ActorType; id: string; tenant?: string } = { type, id };
+  if (tenant !== undefined) {
+    nested.tenant = tenant;
   }
   return Object.freeze(nested);
 }
 
 function validateActor(raw: unknown): Actor {
-  if (!isPlainObject(raw)) {
-    throw new AuditstreamError("INVALID_ACTOR", "actor must be a JSON object");
-  }
-  if (typeof raw.type !== "string" || !VALID_ACTOR_TYPES.has(raw.type)) {
-    throw new AuditstreamError(
-      "INVALID_ACTOR",
-      `actor.type must be one of user, api_key, ai_agent, service, system`,
-    );
-  }
-  assertNonEmptyString(raw.id, "actor.id", "INVALID_ACTOR");
-
-  let onBehalfOf: NestedActor | undefined;
-  if (raw.onBehalfOf !== undefined) {
-    onBehalfOf = validateNestedActor(raw.onBehalfOf);
-  }
-
-  if (raw.tenant !== undefined) {
-    assertNonEmptyString(raw.tenant, "actor.tenant", "INVALID_ACTOR");
-  }
+  const { type, id, tenant } = readValidatedActorCore(raw, "actor", false);
+  const rawOnBehalfOf = readOwnPropertySafe(
+    raw as Record<string, unknown>,
+    "onBehalfOf",
+    "actor.onBehalfOf",
+    "INVALID_ACTOR",
+  );
+  const onBehalfOf = rawOnBehalfOf === undefined ? undefined : validateNestedActor(rawOnBehalfOf);
 
   const actor: {
     type: ActorType;
     id: string;
     onBehalfOf?: NestedActor;
     tenant?: string;
-  } = {
-    type: raw.type as ActorType,
-    id: raw.id,
-  };
+  } = { type, id };
   if (onBehalfOf !== undefined) {
     actor.onBehalfOf = onBehalfOf;
   }
-  if (raw.tenant !== undefined) {
-    actor.tenant = raw.tenant;
+  if (tenant !== undefined) {
+    actor.tenant = tenant;
   }
   return Object.freeze(actor);
 }
 
 function validateContext(raw: unknown): AuditContext {
-  if (!isPlainObject(raw)) {
-    throw new AuditstreamError("INVALID_CONTEXT", "context must be a JSON object");
-  }
-
-  const context: {
-    requestId?: string;
-    source?: string;
-    ip?: string;
-    userAgent?: string;
-  } = {};
-
-  if (raw.requestId !== undefined) {
-    assertNonEmptyString(raw.requestId, "context.requestId", "INVALID_CONTEXT");
-    context.requestId = raw.requestId;
-  }
-  if (raw.source !== undefined) {
-    assertNonEmptyString(raw.source, "context.source", "INVALID_CONTEXT");
-    context.source = raw.source;
-  }
-  if (raw.ip !== undefined) {
-    assertNonEmptyString(raw.ip, "context.ip", "INVALID_CONTEXT");
-    context.ip = raw.ip;
-  }
-  if (raw.userAgent !== undefined) {
-    assertNonEmptyString(raw.userAgent, "context.userAgent", "INVALID_CONTEXT");
-    context.userAgent = raw.userAgent;
-  }
-
-  return Object.freeze(context);
+  return Object.freeze(readValidatedKnownContext(raw)) as AuditContext;
 }
 
 function isInvalidTextString(value: string): boolean {
@@ -336,25 +564,96 @@ export function hasInvalidText(value: unknown): boolean {
   return false;
 }
 
-function validateSerializedText(json: string): void {
-  // JSON.stringify escapes both NUL and lone surrogates. Inspect the actual wire fields,
-  // including extension keys, only when an escape could be present.
-  if (!json.includes("\\u")) return;
-  const fields: Record<string, unknown> = JSON.parse(json);
-  for (const [key, value] of Object.entries(fields)) {
-    if (hasInvalidText(key) || hasInvalidText(value)) {
-      const code = key === "context" ? "INVALID_CONTEXT" : "INVALID_ACTOR";
-      throw new AuditstreamError(
-        code,
-        "audit payload text must not contain NUL or unpaired surrogates",
-      );
-    }
+function hasSerializedForbiddenKeyToken(json: string): boolean {
+  return (
+    json.includes('"__proto__":') ||
+    json.includes('"constructor":') ||
+    json.includes('"prototype":')
+  );
+}
+
+function validateSerializedEntry(
+  key: string,
+  value: unknown,
+  needsKeyCheck: boolean,
+  needsEscapeCheck: boolean,
+): void {
+  const code = key === "context" ? "INVALID_CONTEXT" : "INVALID_ACTOR";
+  if (needsKeyCheck && (FORBIDDEN_OBJECT_KEYS.has(key) || hasForbiddenPrototypeKey(value))) {
+    throw new AuditstreamError(
+      code,
+      "audit payload must not contain __proto__, constructor, or prototype keys",
+    );
+  }
+  if (needsEscapeCheck && (hasInvalidText(key) || hasInvalidText(value))) {
+    throw new AuditstreamError(
+      code,
+      "audit payload text must not contain NUL or unpaired surrogates",
+    );
   }
 }
 
-/** Internal serialization shared by scoped and directly supplied transport payloads. */
-export function serializeScopePayload(payload: object): CachedScopePayload {
-  const json = JSON.stringify(payload);
+function validateSerializedText(json: string): void {
+  const needsEscapeCheck = json.includes("\\u");
+  const needsKeyCheck = hasSerializedForbiddenKeyToken(json);
+  if (!needsEscapeCheck && !needsKeyCheck) {
+    return;
+  }
+
+  const fields = JSON.parse(json) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(fields)) {
+    validateSerializedEntry(key, value, needsKeyCheck, needsEscapeCheck);
+  }
+}
+
+function stringifyJsonObjectSafe(value: object, field: string, code: AuditstreamErrorCode): string {
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    throw new AuditstreamError(code, `${field} is not JSON-serializable`);
+  }
+  if (typeof json !== "string" || !json.startsWith("{")) {
+    throw new AuditstreamError(code, `${field} must serialize to a JSON object`);
+  }
+  if (isInvalidTextString(json)) {
+    throw new AuditstreamError(code, `${field} must not contain NUL or unpaired surrogates`);
+  }
+  if (rawJsonHasOverflowNumber(json)) {
+    throw new AuditstreamError(code, `${field} contains a number outside PostgreSQL numeric range`);
+  }
+  return json;
+}
+
+/**
+ * Internal serialization shared by scoped and directly supplied transport payloads.
+ * Serializes known actor fields, optional `context`, and optional actor extension fields
+ * independently so `toJSON()` runs at most once and errors map cleanly to
+ * `INVALID_ACTOR` vs `INVALID_CONTEXT`.
+ */
+export function serializeScopeParts(
+  knownActor: object,
+  context?: object,
+  actorExtras?: object,
+): CachedScopePayload {
+  const knownJson = stringifyJsonObjectSafe(knownActor, "actor", "INVALID_ACTOR");
+  const contextJson =
+    context === undefined
+      ? undefined
+      : stringifyJsonObjectSafe(context, "context", "INVALID_CONTEXT");
+  const extrasJson =
+    actorExtras === undefined
+      ? undefined
+      : stringifyJsonObjectSafe(actorExtras, "actor", "INVALID_ACTOR");
+
+  let json = knownJson;
+  if (contextJson !== undefined || (extrasJson !== undefined && extrasJson.length > 2)) {
+    const contextPart = contextJson === undefined ? "" : `,"context":${contextJson}`;
+    const extrasPart =
+      extrasJson !== undefined && extrasJson.length > 2 ? `,${extrasJson.slice(1, -1)}` : "";
+    json = `${knownJson.slice(0, -1)}${contextPart}${extrasPart}}`;
+  }
+
   const bytes = textEncoder.encode(json);
   if (bytes.byteLength > MAX_PAYLOAD_BYTES) {
     throw new AuditstreamError(
@@ -371,8 +670,7 @@ function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope
   const actor = validateActor(rawActor);
   const context = rawContext === undefined ? undefined : validateContext(rawContext);
 
-  const payload = context === undefined ? actor : { ...actor, context };
-  const serialized = serializeScopePayload(payload);
+  const serialized = serializeScopeParts(actor, context);
 
   const scope: { actor: Actor; context?: AuditContext } = { actor };
   if (context !== undefined) {
@@ -381,6 +679,17 @@ function buildValidatedScope(rawActor: unknown, rawContext: unknown): AuditScope
   const frozenScope: AuditScope = Object.freeze(scope);
   scopeCache.set(frozenScope, serialized);
   return frozenScope;
+}
+
+function readOptionsContext(options: AuditAsOptions | undefined): unknown {
+  if (options === undefined) {
+    return undefined;
+  }
+  try {
+    return options.context;
+  } catch {
+    throw new AuditstreamError("INVALID_CONTEXT", "context is not readable");
+  }
 }
 
 /**
@@ -392,7 +701,7 @@ export const audit: AuditNamespace = {
     fn: () => T | PromiseLike<T>,
     options?: AuditAsOptions,
   ): Promise<Awaited<T>> {
-    const scope = buildValidatedScope(actor, options?.context);
+    const scope = buildValidatedScope(actor, readOptionsContext(options));
     return await scopeStorage.run(scope, async () => await fn());
   },
 

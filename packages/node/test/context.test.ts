@@ -176,6 +176,169 @@ describe("audit.as() validation (spec 0.1.0)", () => {
     });
     expect(fn).not.toHaveBeenCalled();
   });
+
+  it("rejects prototype-hijacking keys, non-plain prototypes, throwing getters, and hostile Proxies in audit.as() before calling fn", async () => {
+    const fn = vi.fn();
+
+    const protoBoom = new Proxy(
+      { type: "user", id: "u1" },
+      {
+        getPrototypeOf(): never {
+          throw new Error("getPrototypeOf boom");
+        },
+      },
+    );
+    const { proxy: revokedActor, revoke: revokeActor } = Proxy.revocable(
+      { type: "user", id: "u1" },
+      {},
+    );
+    revokeActor();
+    const { proxy: revokedOptions, revoke: revokeOptions } = Proxy.revocable({}, {});
+    revokeOptions();
+
+    const badActors: readonly unknown[] = [
+      JSON.parse('{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}'),
+      JSON.parse('{"type":"user","id":"u1","constructor":{"x":1}}'),
+      JSON.parse('{"type":"user","id":"u1","prototype":{"x":1}}'),
+      {
+        type: "ai_agent",
+        id: "a1",
+        onBehalfOf: JSON.parse('{"type":"user","id":"u1","__proto__":{"tenant":"evil"}}'),
+      },
+      {
+        type: "user",
+        id: "u1",
+        extra: { nested: JSON.parse('{"__proto__":{"x":1}}') },
+      },
+      Object.assign(Object.create({ tenant: "spoofed" }) as Record<string, unknown>, {
+        type: "user",
+        id: "u1",
+      }),
+      {
+        type: "ai_agent",
+        id: "a1",
+        onBehalfOf: Object.assign(Object.create({ tenant: "spoofed" }) as Record<string, unknown>, {
+          type: "user",
+          id: "u1",
+        }),
+      },
+      {
+        type: "user",
+        id: "u1",
+        get unused(): string {
+          throw new Error("getter boom");
+        },
+      },
+      protoBoom,
+      revokedActor,
+    ];
+
+    for (const actor of badActors) {
+      await expect(audit.as(actor as Actor, fn)).rejects.toMatchObject({
+        name: "AuditstreamError",
+        code: "INVALID_ACTOR",
+      });
+    }
+
+    const badContexts: readonly unknown[] = [
+      JSON.parse('{"requestId":"r1","__proto__":{"source":"evil"}}'),
+      JSON.parse('{"constructor":{"x":1}}'),
+      JSON.parse('{"nested":{"prototype":1}}'),
+      Object.assign(Object.create({ source: "spoofed" }) as Record<string, unknown>, {
+        requestId: "r1",
+      }),
+      {
+        requestId: "r1",
+        get unused(): string {
+          throw new Error("context getter boom");
+        },
+      },
+      protoBoom,
+      revokedActor,
+    ];
+
+    for (const context of badContexts) {
+      await expect(
+        audit.as({ type: "user", id: "u1" }, fn, { context: context as AuditContext }),
+      ).rejects.toMatchObject({
+        name: "AuditstreamError",
+        code: "INVALID_CONTEXT",
+      });
+    }
+
+    await expect(
+      audit.as({ type: "user", id: "u1" }, fn, {
+        get context(): AuditContext {
+          throw new Error("options.context boom");
+        },
+      }),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_CONTEXT" });
+    await expect(
+      audit.as(
+        { type: "user", id: "u1" },
+        fn,
+        revokedOptions as unknown as { context?: AuditContext },
+      ),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_CONTEXT" });
+
+    expect(fn).not.toHaveBeenCalled();
+
+    // Null-prototype plain objects without forbidden keys remain valid.
+    const nullProtoActor = Object.assign(Object.create(null) as Record<string, unknown>, {
+      type: "user",
+      id: "usr_null",
+    }) as unknown as Actor;
+    const observed = await audit.as(nullProtoActor, () => audit.current());
+    expect(observed).toEqual({ actor: { type: "user", id: "usr_null" } });
+
+    // Array Symbol.iterator bypass, array expando __proto__, and sparse-array DoS are handled safely.
+    const sneakyArray = [JSON.parse('{"__proto__":{"polluted":true}}')];
+    Object.defineProperty(sneakyArray, Symbol.iterator, {
+      value: () => ({ next: () => ({ done: true, value: undefined }) }),
+    });
+    const expandoArray: unknown[] = [1];
+    Object.defineProperty(expandoArray, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    await expect(
+      audit.as({ type: "user", id: "u1", extra: sneakyArray } as unknown as Actor, fn),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_ACTOR" });
+    await expect(
+      audit.as({ type: "user", id: "u1", extra: expandoArray } as unknown as Actor, fn),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_ACTOR" });
+    const sparse = new Array(2_000_000);
+    const sparseResult = await audit.as(
+      { type: "user", id: "u_sparse", extra: sparse } as unknown as Actor,
+      () => audit.current(),
+    );
+    expect(sparseResult).toEqual({ actor: { type: "user", id: "u_sparse" } });
+
+    // Large TypedArrays / boxed Strings bypass O(length) Object.keys() materialization while
+    // still rejecting direct forbidden expando properties.
+    const largeBytes = new Uint8Array(2_000_000);
+    const largeBytesResult = await audit.as(
+      { type: "user", id: "u_bytes", extra: largeBytes } as unknown as Actor,
+      () => audit.current(),
+    );
+    expect(largeBytesResult).toEqual({ actor: { type: "user", id: "u_bytes" } });
+
+    const poisonedLargeBytes = new Uint8Array(1024);
+    Object.defineProperty(poisonedLargeBytes, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    await expect(
+      audit.as({ type: "user", id: "u1", extra: poisonedLargeBytes } as unknown as Actor, fn),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_ACTOR" });
+
+    const largeBoxedStr = Object("a".repeat(1024));
+    const largeBoxedResult = await audit.as(
+      { type: "user", id: "u_boxed", extra: largeBoxedStr } as unknown as Actor,
+      () => audit.current(),
+    );
+    expect(largeBoxedResult).toEqual({ actor: { type: "user", id: "u_boxed" } });
+  });
 });
 
 describe("audit.as() scope propagation", () => {
