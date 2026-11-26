@@ -200,32 +200,143 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   }
 }
 
-/** Internal safe own-property lookup that never walks the prototype chain. */
-export function getOwnValue(obj: Record<string, unknown>, key: string): unknown {
-  return Object.hasOwn(obj, key) ? obj[key] : undefined;
+/** Internal code-point lookup returning `-1` when `index` is out of bounds. */
+export function codeAt(text: string, index: number): number {
+  return text.codePointAt(index) ?? -1;
 }
 
-/** Internal safe own data property setter immune to `__proto__` prototype hijacking. */
-export function defineOwnDataProperty(
-  target: Record<string, unknown>,
-  key: string,
-  value: unknown,
-): void {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    writable: true,
-    configurable: true,
-  });
+const PG_NUMERIC_MAX_DSCALE = 16_383;
+const PG_NUMERIC_MAX_MSD_POS = 131_071; // floor(131071 / 4) === NUMERIC_WEIGHT_MAX (32767)
+const PG_NUMERIC_EXP_LIMIT = 1_073_741_823; // INT_MAX / 2 in PostgreSQL numeric.c
+
+function isJsonNumberStartCode(code: number): boolean {
+  return code === 0x2d || (code >= 0x30 && code <= 0x39);
+}
+
+function isJsonNumberContCode(code: number): boolean {
+  return (
+    (code >= 0x30 && code <= 0x39) ||
+    code === 0x2e ||
+    code === 0x65 ||
+    code === 0x45 ||
+    code === 0x2b ||
+    code === 0x2d
+  );
+}
+
+function findMostSignificantDigitPos(intPart: string, fracPart: string): number | null {
+  for (let i = 0; i < intPart.length; i++) {
+    if (codeAt(intPart, i) !== 0x30) {
+      return intPart.length - 1 - i;
+    }
+  }
+  for (let i = 0; i < fracPart.length; i++) {
+    if (codeAt(fracPart, i) !== 0x30) {
+      return -(i + 1);
+    }
+  }
+  return null;
+}
+
+function isPgNumericOverflowToken(token: string): boolean {
+  let eIdx = token.indexOf("e");
+  if (eIdx === -1) {
+    eIdx = token.indexOf("E");
+  }
+  if (eIdx === -1) {
+    return false;
+  }
+  const expVal = Number(token.slice(eIdx + 1));
+  if (!Number.isSafeInteger(expVal) || Math.abs(expVal) >= PG_NUMERIC_EXP_LIMIT) {
+    return true;
+  }
+  const mantissaStart = codeAt(token, 0) === 0x2d ? 1 : 0;
+  const mantissa = token.slice(mantissaStart, eIdx);
+  const dotIdx = mantissa.indexOf(".");
+  const intPart = dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx);
+  const fracPart = dotIdx === -1 ? "" : mantissa.slice(dotIdx + 1);
+
+  if (Math.max(0, fracPart.length - expVal) > PG_NUMERIC_MAX_DSCALE) {
+    return true;
+  }
+  const msdPos = findMostSignificantDigitPos(intPart, fracPart);
+  return msdPos !== null && msdPos + expVal > PG_NUMERIC_MAX_MSD_POS;
+}
+
+function skipJsonString(raw: string, quoteIndex: number): number {
+  let i = quoteIndex + 1;
+  while (i < raw.length) {
+    const c = codeAt(raw, i);
+    if (c === 0x5c) {
+      i += 2;
+    } else if (c === 0x22) {
+      return i + 1;
+    } else {
+      i += 1;
+    }
+  }
+  return raw.length;
+}
+
+function readJsonNumberEnd(raw: string, start: number): number {
+  let i = start + 1;
+  while (i < raw.length && isJsonNumberContCode(codeAt(raw, i))) {
+    i += 1;
+  }
+  return i;
+}
+
+/**
+ * Scans valid raw JSON text (including overwritten duplicate keys and `JSON.rawJSON()` literals)
+ * for numeric tokens that overflow PostgreSQL's `jsonb` / `numeric` limits
+ * (`NUMERIC_WEIGHT_MAX = 32767`, `NUMERIC_DSCALE_MAX = 16383`, or `|exp| >= INT_MAX / 2`).
+ */
+export function rawJsonHasOverflowNumber(raw: string): boolean {
+  if (!raw.includes("e") && !raw.includes("E")) {
+    return false;
+  }
+  let i = 0;
+  while (i < raw.length) {
+    const ch = codeAt(raw, i);
+    if (ch === 0x22) {
+      i = skipJsonString(raw, i);
+    } else if (isJsonNumberStartCode(ch)) {
+      const end = readJsonNumberEnd(raw, i);
+      if (isPgNumericOverflowToken(raw.slice(i, end))) {
+        return true;
+      }
+      i = end;
+    } else {
+      i += 1;
+    }
+  }
+  return false;
+}
+
+function isLargeIndexedHostObject(current: object): boolean {
+  if (ArrayBuffer.isView(current) && !(current instanceof DataView)) {
+    return current.byteLength > MAX_PAYLOAD_BYTES;
+  }
+  return current instanceof String && current.length > MAX_PAYLOAD_BYTES;
+}
+
+function hasDirectForbiddenOwnKey(current: object): boolean {
+  for (const key of FORBIDDEN_OBJECT_KEYS) {
+    if (Object.hasOwn(current, key)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function pushContainerChildren(current: object, stack: unknown[]): boolean {
-  if (Array.isArray(current)) {
-    for (const item of current) {
-      stack.push(item);
-    }
-    return false;
+  // Guard large TypedArrays/Buffers and boxed Strings so Object.keys() never materializes millions
+  // of synthetic index keys while still catching direct forbidden expando properties in O(1).
+  if (isLargeIndexedHostObject(current)) {
+    return hasDirectForbiddenOwnKey(current);
   }
+  // Using Object.keys() on both plain objects and arrays avoids custom Array[Symbol.iterator],
+  // inspects array expando properties (such as __proto__), and skips sparse-array holes in O(populated).
   for (const key of Object.keys(current)) {
     if (FORBIDDEN_OBJECT_KEYS.has(key)) {
       return true;
@@ -288,7 +399,7 @@ function assertNonEmptyString(
  * (`__proto__`, `constructor`, `prototype`), converting throwing getters/Proxy traps
  * into `AuditstreamError`.
  */
-export function assertSafePlainObject(
+function assertSafePlainObject(
   raw: unknown,
   field: string,
   code: AuditstreamErrorCode,
@@ -505,13 +616,19 @@ function stringifyJsonObjectSafe(value: object, field: string, code: Auditstream
   if (typeof json !== "string" || !json.startsWith("{")) {
     throw new AuditstreamError(code, `${field} must serialize to a JSON object`);
   }
+  if (isInvalidTextString(json)) {
+    throw new AuditstreamError(code, `${field} must not contain NUL or unpaired surrogates`);
+  }
+  if (rawJsonHasOverflowNumber(json)) {
+    throw new AuditstreamError(code, `${field} contains a number outside PostgreSQL numeric range`);
+  }
   return json;
 }
 
 /**
  * Internal serialization shared by scoped and directly supplied transport payloads.
  * Serializes known actor fields, optional `context`, and optional actor extension fields
- * independently so every `toJSON()`/getter runs at most once and errors map cleanly to
+ * independently so `toJSON()` runs at most once and errors map cleanly to
  * `INVALID_ACTOR` vs `INVALID_CONTEXT`.
  */
 export function serializeScopeParts(

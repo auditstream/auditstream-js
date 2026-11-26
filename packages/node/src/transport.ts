@@ -4,13 +4,13 @@ import {
   AuditstreamError,
   audit,
   type CachedScopePayload,
-  defineOwnDataProperty,
+  codeAt,
   getCachedScopePayload,
-  getOwnValue,
   hasForbiddenPrototypeKey,
   isPlainObject,
   MAX_PAYLOAD_BYTES,
   type NestedActor,
+  rawJsonHasOverflowNumber,
   readOwnPropertySafe,
   readValidatedActorCore,
   readValidatedKnownContext,
@@ -61,6 +61,19 @@ const TAIL_SLICE_CHARS = 4096;
 // convert_from(..., 'UTF8')::jsonb (which does not strip BOM and yields actor_source = 'invalid').
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
+function getOwnValue(obj: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(obj, key) ? obj[key] : undefined;
+}
+
+function defineOwnDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
@@ -70,7 +83,7 @@ function isValidOptionalNonEmptyString(obj: Record<string, unknown>, key: string
 }
 
 function isValidNestedActorObject(value: unknown): boolean {
-  if (!isPlainObject(value)) {
+  if (!isPlainObject(value) || hasForbiddenPrototypeKey(value)) {
     return false;
   }
   const type = getOwnValue(value, "type");
@@ -86,36 +99,44 @@ function isValidNestedActorObject(value: unknown): boolean {
 
 /** Internal Spec 0.1.0 actor payload validator shared with `history.ts`. */
 export function isValidActorObject(value: unknown): boolean {
-  if (!isPlainObject(value) || hasForbiddenPrototypeKey(value)) {
+  try {
+    if (!isPlainObject(value) || hasForbiddenPrototypeKey(value)) {
+      return false;
+    }
+    const type = getOwnValue(value, "type");
+    const id = getOwnValue(value, "id");
+    if (
+      typeof type !== "string" ||
+      !VALID_ACTOR_TYPES.has(type) ||
+      !isNonEmptyString(id) ||
+      !isValidOptionalNonEmptyString(value, "tenant")
+    ) {
+      return false;
+    }
+    if (Object.hasOwn(value, "onBehalfOf")) {
+      return isValidNestedActorObject(getOwnValue(value, "onBehalfOf"));
+    }
+    return true;
+  } catch {
     return false;
   }
-  const type = getOwnValue(value, "type");
-  const id = getOwnValue(value, "id");
-  if (
-    typeof type !== "string" ||
-    !VALID_ACTOR_TYPES.has(type) ||
-    !isNonEmptyString(id) ||
-    !isValidOptionalNonEmptyString(value, "tenant")
-  ) {
-    return false;
-  }
-  if (Object.hasOwn(value, "onBehalfOf") && !isValidNestedActorObject(value.onBehalfOf)) {
-    return false;
-  }
-  return true;
 }
 
 /** Internal Spec 0.1.0 context payload validator shared with `history.ts`. */
 export function isValidContextObject(value: unknown): value is Record<string, unknown> {
-  if (!isPlainObject(value) || hasForbiddenPrototypeKey(value)) {
-    return false;
-  }
-  for (const key of KNOWN_CONTEXT_KEYS) {
-    if (!isValidOptionalNonEmptyString(value, key)) {
+  try {
+    if (!isPlainObject(value) || hasForbiddenPrototypeKey(value)) {
       return false;
     }
+    for (const key of KNOWN_CONTEXT_KEYS) {
+      if (!isValidOptionalNonEmptyString(value, key)) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
   }
-  return true;
 }
 
 /**
@@ -367,14 +388,6 @@ type ParsedCommentTag =
   | { readonly kind: "invalid" }
   | { readonly kind: "found"; readonly value: string };
 
-const PG_NUMERIC_MAX_DSCALE = 16_383;
-const PG_NUMERIC_MAX_MSD_POS = 131_071; // floor(131071 / 4) === NUMERIC_WEIGHT_MAX (32767)
-const PG_NUMERIC_EXP_LIMIT = 1_073_741_823; // INT_MAX / 2 in PostgreSQL numeric.c
-
-function codeAt(text: string, index: number): number {
-  return text.codePointAt(index) ?? -1;
-}
-
 /**
  * Matches PostgreSQL `scan.l` `space` (`[ \t\n\r\f\v]`) and `resolve_actor()`'s
  * `rtrim(..., E' \t\n\r\f\v;')`. Non-ASCII whitespace (such as `\u00A0`) is lexed as an
@@ -412,15 +425,28 @@ function isDollarTagContCode(code: number): boolean {
   return isIdentStartCode(code) || (code >= 0x30 && code <= 0x39);
 }
 
+/**
+ * Matches `spec/transport.md` sqlcommenter keys plus the unescaped `encodeURIComponent`
+ * characters emitted by Drizzle 1.x and Prisma 7 (`A-Za-z0-9-_.!~*()%`).
+ */
 function isSqlcommenterKeyChar(code: number): boolean {
-  return (
+  if (
     (code >= 0x41 && code <= 0x5a) ||
     (code >= 0x61 && code <= 0x7a) ||
-    (code >= 0x30 && code <= 0x39) ||
+    (code >= 0x30 && code <= 0x39)
+  ) {
+    return true;
+  }
+  return (
     code === 0x5f ||
     code === 0x2d ||
     code === 0x2e ||
-    code === 0x25
+    code === 0x25 ||
+    code === 0x21 ||
+    code === 0x7e ||
+    code === 0x2a ||
+    code === 0x28 ||
+    code === 0x29
   );
 }
 
@@ -665,16 +691,17 @@ function endsWithBlockCommentClose(sql: string): boolean {
   return end >= 3 && codeAt(sql, end) === 0x2f && codeAt(sql, end - 1) === 0x2a;
 }
 
-function sqlEndsInLineComment(sql: string): boolean {
+function hasAuditstreamMarkerInTail(sql: string): boolean {
+  return sql.indexOf("auditstream='", Math.max(0, sql.length - TAIL_SLICE_CHARS * 2)) !== -1;
+}
+
+function hasLineCommentCandidate(sql: string): boolean {
   const lastBreak = Math.max(sql.lastIndexOf("\n"), sql.lastIndexOf("\r"));
-  if (sql.indexOf("--", lastBreak + 1) === -1) {
-    return false;
-  }
-  return scanSqlTail(sql).endsInLineComment;
+  return sql.indexOf("--", lastBreak + 1) !== -1;
 }
 
 function extractTrailingCommentBody(sql: string): string | null {
-  if (!endsWithBlockCommentClose(sql)) {
+  if (!endsWithBlockCommentClose(sql) || !hasAuditstreamMarkerInTail(sql)) {
     return null;
   }
   return scanSqlTail(sql).trailingBlockCommentBody;
@@ -689,9 +716,6 @@ function readSqlcommenterValue(
   let i = start;
   while (i < len) {
     const c = codeAt(body, i);
-    if (c === 0x2f) {
-      return null;
-    }
     if (allowBackslashEscapes && c === 0x5c) {
       const next = codeAt(body, i + 1);
       if (next === 0x27 || next === 0x5c) {
@@ -707,22 +731,38 @@ function readSqlcommenterValue(
   return null;
 }
 
+function readSqlcommenterKeyEnd(
+  body: string,
+  start: number,
+  allowEscapedApostrophe: boolean,
+): number {
+  let i = start;
+  while (i < body.length) {
+    const c = codeAt(body, i);
+    if (isSqlcommenterKeyChar(c)) {
+      i += 1;
+    } else if (allowEscapedApostrophe && c === 0x5c && codeAt(body, i + 1) === 0x27) {
+      i += 2;
+    } else {
+      break;
+    }
+  }
+  return i;
+}
+
 function readSqlcommenterPair(
   body: string,
   start: number,
   allowOtherBackslashEscapes: boolean,
 ): { readonly key: string; readonly value: string; readonly nextIndex: number } | null {
-  let i = start;
-  while (i < body.length && isSqlcommenterKeyChar(codeAt(body, i))) {
-    i += 1;
-  }
-  if (i === start || codeAt(body, i) !== 0x3d || codeAt(body, i + 1) !== 0x27) {
+  const keyEnd = readSqlcommenterKeyEnd(body, start, allowOtherBackslashEscapes);
+  if (keyEnd === start || codeAt(body, keyEnd) !== 0x3d || codeAt(body, keyEnd + 1) !== 0x27) {
     return null;
   }
-  const key = body.slice(start, i);
+  const key = body.slice(start, keyEnd);
   const parsedVal = readSqlcommenterValue(
     body,
-    i + 2,
+    keyEnd + 2,
     allowOtherBackslashEscapes && key !== "auditstream",
   );
   if (parsedVal === null) {
@@ -789,29 +829,20 @@ function parseAuditstreamFromCommentBody(body: string): ParsedCommentTag {
 }
 
 function parseHexDigit(code: number): number {
-  if (code >= 0x30 && code <= 0x39) {
+  if (code <= 0x39) {
     return code - 0x30;
   }
-  if (code >= 0x41 && code <= 0x46) {
-    return code - 0x41 + 10;
+  if (code <= 0x46) {
+    return code - 0x37;
   }
-  if (code >= 0x61 && code <= 0x66) {
-    return code - 0x61 + 10;
-  }
-  return -1;
+  return code - 0x57;
 }
 
 function parseHex4(raw: string, start: number): number {
-  if (start + 4 > raw.length) {
-    return -1;
-  }
   const d0 = parseHexDigit(codeAt(raw, start));
   const d1 = parseHexDigit(codeAt(raw, start + 1));
   const d2 = parseHexDigit(codeAt(raw, start + 2));
   const d3 = parseHexDigit(codeAt(raw, start + 3));
-  if ((d0 | d1 | d2 | d3) < 0) {
-    return -1;
-  }
   return (d0 << 12) | (d1 << 8) | (d2 << 4) | d3;
 }
 
@@ -868,110 +899,6 @@ function rawJsonHasInvalidEscape(raw: string): boolean {
   return false;
 }
 
-function isJsonNumberStartCode(code: number): boolean {
-  return code === 0x2d || (code >= 0x30 && code <= 0x39);
-}
-
-function isJsonNumberContCode(code: number): boolean {
-  return (
-    (code >= 0x30 && code <= 0x39) ||
-    code === 0x2e ||
-    code === 0x65 ||
-    code === 0x45 ||
-    code === 0x2b ||
-    code === 0x2d
-  );
-}
-
-function findMostSignificantDigitPos(intPart: string, fracPart: string): number | null {
-  for (let i = 0; i < intPart.length; i++) {
-    if (codeAt(intPart, i) !== 0x30) {
-      return intPart.length - 1 - i;
-    }
-  }
-  for (let i = 0; i < fracPart.length; i++) {
-    if (codeAt(fracPart, i) !== 0x30) {
-      return -(i + 1);
-    }
-  }
-  return null;
-}
-
-function isPgNumericOverflowToken(token: string): boolean {
-  let eIdx = token.indexOf("e");
-  if (eIdx === -1) {
-    eIdx = token.indexOf("E");
-  }
-  if (eIdx === -1) {
-    return false;
-  }
-  const expVal = Number(token.slice(eIdx + 1));
-  if (!Number.isSafeInteger(expVal) || Math.abs(expVal) >= PG_NUMERIC_EXP_LIMIT) {
-    return true;
-  }
-  const mantissaStart = codeAt(token, 0) === 0x2d ? 1 : 0;
-  const mantissa = token.slice(mantissaStart, eIdx);
-  const dotIdx = mantissa.indexOf(".");
-  const intPart = dotIdx === -1 ? mantissa : mantissa.slice(0, dotIdx);
-  const fracPart = dotIdx === -1 ? "" : mantissa.slice(dotIdx + 1);
-
-  if (Math.max(0, fracPart.length - expVal) > PG_NUMERIC_MAX_DSCALE) {
-    return true;
-  }
-  const msdPos = findMostSignificantDigitPos(intPart, fracPart);
-  return msdPos !== null && msdPos + expVal > PG_NUMERIC_MAX_MSD_POS;
-}
-
-function skipJsonString(raw: string, quoteIndex: number): number {
-  let i = quoteIndex + 1;
-  while (i < raw.length) {
-    const c = codeAt(raw, i);
-    if (c === 0x5c) {
-      i += 2;
-    } else if (c === 0x22) {
-      return i + 1;
-    } else {
-      i += 1;
-    }
-  }
-  return raw.length;
-}
-
-function readJsonNumberEnd(raw: string, start: number): number {
-  let i = start + 1;
-  while (i < raw.length && isJsonNumberContCode(codeAt(raw, i))) {
-    i += 1;
-  }
-  return i;
-}
-
-/**
- * Scans valid raw JSON text (including overwritten duplicate keys) for numeric tokens that
- * overflow PostgreSQL's `jsonb` / `numeric` limits (`NUMERIC_WEIGHT_MAX = 32767`,
- * `NUMERIC_DSCALE_MAX = 16383`, or exponent `>= INT_MAX / 2`, SQLSTATE `22003`).
- */
-function rawJsonHasOverflowNumber(raw: string): boolean {
-  if (!raw.includes("e") && !raw.includes("E")) {
-    return false;
-  }
-  let i = 0;
-  while (i < raw.length) {
-    const ch = codeAt(raw, i);
-    if (ch === 0x22) {
-      i = skipJsonString(raw, i);
-    } else if (isJsonNumberStartCode(ch)) {
-      const end = readJsonNumberEnd(raw, i);
-      if (isPgNumericOverflowToken(raw.slice(i, end))) {
-        return true;
-      }
-      i = end;
-    } else {
-      i += 1;
-    }
-  }
-  return false;
-}
-
 /**
  * Validates `scope` against Auditstream Specification 0.1.0, serializes it into canonical
  * compact UTF-8 JSON (key order `type`, `id`, `onBehalfOf`, `tenant`, `context`), and
@@ -1015,6 +942,23 @@ export function isTagged(sql: string): boolean {
   return decodeScope(sql).actorSource === "comment";
 }
 
+function inspectSqlForTagging(sql: string): {
+  readonly alreadyTagged: boolean;
+  readonly needsNewline: boolean;
+} {
+  const hasTailMarker = endsWithBlockCommentClose(sql) && hasAuditstreamMarkerInTail(sql);
+  const hasLineCandidate = hasLineCommentCandidate(sql);
+  if (!hasTailMarker && !hasLineCandidate) {
+    return { alreadyTagged: false, needsNewline: false };
+  }
+  const tail = scanSqlTail(sql);
+  const alreadyTagged =
+    hasTailMarker &&
+    tail.trailingBlockCommentBody !== null &&
+    decodeCommentBody(tail.trailingBlockCommentBody).actorSource === "comment";
+  return { alreadyTagged, needsNewline: tail.endsInLineComment };
+}
+
 /**
  * Appends ` /*auditstream='<base64url>'*\/` (or `\n/*auditstream='<base64url>'*\/` when `sql`
  * ends inside a `--` single-line comment) to the end of `sql` for the active or supplied
@@ -1030,10 +974,10 @@ export function tagSql(sql: string, scope: AuditScope | undefined = audit.curren
   if (scope === undefined) {
     return sql;
   }
-  if (isTagged(sql)) {
+  const { alreadyTagged, needsNewline } = inspectSqlForTagging(sql);
+  if (alreadyTagged) {
     return sql;
   }
-  const needsNewline = sqlEndsInLineComment(sql);
   const cached = getCachedScopePayload(scope);
   if (cached !== undefined) {
     const encoded = getOrEncodeCached(cached);
@@ -1088,26 +1032,7 @@ function invalidDecode(): DecodedTransport {
   return { actor: null, context: null, actorSource: "invalid" };
 }
 
-/**
- * Decodes a trailing `/*auditstream='...'*\/` SQL comment from `sql` following the exact
- * extraction and validation rules in `spec/transport.md`.
- *
- * - Returns `{ actor: null, context: null, actorSource: null }` when no trailing comment
- *   or no `auditstream` key is present.
- * - Returns `{ actor: null, context: null, actorSource: "invalid" }` when an `auditstream`
- *   key is present but malformed, oversized (over 512 UTF-8 bytes or 683 chars), padded,
- *   invalid UTF-8, non-JSON, contains forbidden prototype keys, or violates the `spec/actor.md`
- *   actor/context schema (including the 5-value `type` enum, non-empty `id`/`tenant`, depth-1
- *   `onBehalfOf`, and object `context` with non-empty known fields).
- * - Preserves unknown additive keys in `actor`, `onBehalfOf`, and `context`.
- * - Never throws on malformed input.
- */
-export function decodeScope(sql: string): DecodedTransport {
-  const body = extractTrailingCommentBody(sql);
-  if (body === null) {
-    return absentDecode();
-  }
-
+function decodeCommentBody(body: string): DecodedTransport {
   const parsedTag = parseAuditstreamFromCommentBody(body);
   if (parsedTag.kind === "absent") {
     return absentDecode();
@@ -1142,4 +1067,26 @@ export function decodeScope(sql: string): DecodedTransport {
   }
 
   return { actor, context, actorSource: "comment" };
+}
+
+/**
+ * Decodes a trailing `/*auditstream='...'*\/` SQL comment from `sql` following the exact
+ * extraction and validation rules in `spec/transport.md`.
+ *
+ * - Returns `{ actor: null, context: null, actorSource: null }` when no trailing comment
+ *   or no `auditstream` key is present.
+ * - Returns `{ actor: null, context: null, actorSource: "invalid" }` when an `auditstream`
+ *   key is present but malformed, oversized (over 512 UTF-8 bytes or 683 chars), padded,
+ *   invalid UTF-8, non-JSON, contains forbidden prototype keys, or violates the `spec/actor.md`
+ *   actor/context schema (including the 5-value `type` enum, non-empty `id`/`tenant`, depth-1
+ *   `onBehalfOf`, and object `context` with non-empty known fields).
+ * - Preserves unknown additive keys in `actor`, `onBehalfOf`, and `context`.
+ * - Never throws on malformed input.
+ */
+export function decodeScope(sql: string): DecodedTransport {
+  const body = extractTrailingCommentBody(sql);
+  if (body === null) {
+    return absentDecode();
+  }
+  return decodeCommentBody(body);
 }

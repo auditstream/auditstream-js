@@ -290,6 +290,54 @@ describe("audit.as() validation (spec 0.1.0)", () => {
     }) as unknown as Actor;
     const observed = await audit.as(nullProtoActor, () => audit.current());
     expect(observed).toEqual({ actor: { type: "user", id: "usr_null" } });
+
+    // Array Symbol.iterator bypass, array expando __proto__, and sparse-array DoS are handled safely.
+    const sneakyArray = [JSON.parse('{"__proto__":{"polluted":true}}')];
+    Object.defineProperty(sneakyArray, Symbol.iterator, {
+      value: () => ({ next: () => ({ done: true, value: undefined }) }),
+    });
+    const expandoArray: unknown[] = [1];
+    Object.defineProperty(expandoArray, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    await expect(
+      audit.as({ type: "user", id: "u1", extra: sneakyArray } as unknown as Actor, fn),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_ACTOR" });
+    await expect(
+      audit.as({ type: "user", id: "u1", extra: expandoArray } as unknown as Actor, fn),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_ACTOR" });
+    const sparse = new Array(2_000_000);
+    const sparseResult = await audit.as(
+      { type: "user", id: "u_sparse", extra: sparse } as unknown as Actor,
+      () => audit.current(),
+    );
+    expect(sparseResult).toEqual({ actor: { type: "user", id: "u_sparse" } });
+
+    // Large TypedArrays / boxed Strings bypass O(length) Object.keys() materialization while
+    // still rejecting direct forbidden expando properties.
+    const largeBytes = new Uint8Array(2_000_000);
+    const largeBytesResult = await audit.as(
+      { type: "user", id: "u_bytes", extra: largeBytes } as unknown as Actor,
+      () => audit.current(),
+    );
+    expect(largeBytesResult).toEqual({ actor: { type: "user", id: "u_bytes" } });
+
+    const poisonedLargeBytes = new Uint8Array(1024);
+    Object.defineProperty(poisonedLargeBytes, "__proto__", {
+      value: { polluted: true },
+      enumerable: true,
+    });
+    await expect(
+      audit.as({ type: "user", id: "u1", extra: poisonedLargeBytes } as unknown as Actor, fn),
+    ).rejects.toMatchObject({ name: "AuditstreamError", code: "INVALID_ACTOR" });
+
+    const largeBoxedStr = Object("a".repeat(1024));
+    const largeBoxedResult = await audit.as(
+      { type: "user", id: "u_boxed", extra: largeBoxedStr } as unknown as Actor,
+      () => audit.current(),
+    );
+    expect(largeBoxedResult).toEqual({ actor: { type: "user", id: "u_boxed" } });
   });
 });
 
