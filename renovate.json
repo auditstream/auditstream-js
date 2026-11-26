@@ -20,11 +20,6 @@
       "groupSlug": "github-actions"
     },
     {
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["ossf/scorecard-action"],
-      "allowedVersions": "!=2.6.0"
-    },
-    {
       "matchDepTypes": ["peerDependencies"],
       "enabled": false
     },
