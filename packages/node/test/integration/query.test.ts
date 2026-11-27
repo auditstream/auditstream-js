@@ -135,4 +135,58 @@ describe("audit.query() live Postgres integration", () => {
     expect(seenIds).toHaveLength(6);
     expect(new Set(seenIds).size).toBe(6);
   });
+
+  it("paginates same-microsecond ties numerically across power-of-10 id boundaries without dropping rows or text-alias sorts", async () => {
+    await adminClient.query(
+      `INSERT INTO auditstream.changes
+         (id, occurred_at, source, schema_name, table_name, op, record_id)
+       OVERRIDING SYSTEM VALUE VALUES
+         (999,  date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'INSERT', '{"id":777}'::jsonb),
+         (1000, date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'UPDATE', '{"id":777}'::jsonb),
+         (1001, date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'UPDATE', '{"id":777}'::jsonb)`,
+    );
+
+    let firstPageSql = "";
+    let firstPageValues: AuditQueryValues = [];
+    const pgExec = (text: string, values: AuditQueryValues) => {
+      if (firstPageSql === "") {
+        firstPageSql = text;
+        firstPageValues = [...values];
+      }
+      return appPool.query(text, values);
+    };
+    const seenIds: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+
+    do {
+      const page = await audit.query(pgExec, {
+        table: "tie_invoice",
+        recordId: { id: 777 },
+        limit: 1,
+        cursor,
+      });
+      pages += 1;
+      for (const entry of page.entries) {
+        expect(entry.occurred_at).toMatch(/\.123456Z$/);
+        seenIds.push(entry.id);
+      }
+      cursor = page.nextCursor ?? undefined;
+      if (!page.hasMore) {
+        expect(page.nextCursor).toBeNull();
+        break;
+      }
+      expect(page.nextCursor).not.toBeNull();
+    } while (pages < 10);
+
+    expect(pages).toBe(3);
+    expect(seenIds).toEqual(["1001", "1000", "999"]);
+
+    const planResult = await appPool.query<{ "QUERY PLAN": string }>(
+      `EXPLAIN (FORMAT TEXT) ${firstPageSql}`,
+      firstPageValues,
+    );
+    const planText = planResult.rows.map((r) => r["QUERY PLAN"]).join("\n");
+    expect(planText).not.toMatch(/Sort Key:.*(to_char\(|::text)/i);
+  });
 });

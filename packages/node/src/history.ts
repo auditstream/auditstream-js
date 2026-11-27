@@ -627,7 +627,7 @@ export function extractQueryRows(
 
 /**
  * Reads recorded audit history for a single record from `{schema}.changes`, ordered newest first
- * (`occurred_at DESC, id DESC`).
+ * (`changes.occurred_at DESC, changes.id DESC`).
  *
  * - Sends one parameterized `SELECT` selecting only the 18 normative columns from
  *   `spec/history-table.md`, bound as `($1::text, $2::jsonb, $3::int)`.
@@ -648,7 +648,7 @@ export async function readHistory(
     `SELECT ${HISTORY_SELECT_COLUMNS} ` +
     `FROM "${schema}"."changes" ` +
     `WHERE table_name = $1::text AND record_id = $2::jsonb ` +
-    `ORDER BY occurred_at DESC, id DESC ` +
+    `ORDER BY changes.occurred_at DESC, changes.id DESC ` +
     `LIMIT $3::int`;
 
   const result = await exec(sql, [table, recordIdJson, limit]);
