@@ -5,9 +5,9 @@
 [![SonarCloud Quality Gate][sonar-badge]][sonar-url]
 [![OpenSSF Scorecard][scorecard-badge]][scorecard-url]
 
-Actor context propagation, application event logging, history helpers, and web framework integrations for [Auditstream](https://auditstream.dev).
+Actor context propagation, PostgreSQL driver wrappers, application event logging, history helpers, and web framework integrations for [Auditstream](https://auditstream.dev).
 
-`@auditstream/node` tracks who initiated each request with `AsyncLocalStorage`. ORM adapters read that scope and attach it to outgoing SQL so database capture triggers record who acted — including delegated AI agents (`onBehalfOf`). Full guides and API reference live at **[auditstream.dev/docs/typescript](https://auditstream.dev/docs/typescript/)**.
+`@auditstream/node` tracks who initiated each request with `AsyncLocalStorage`. Driver wrappers (`@auditstream/node/pg`, `@auditstream/node/postgres-js`, `@auditstream/node/neon-http`) and ORM adapters read that scope and attach it to outgoing SQL so database capture triggers record who acted — including delegated AI agents (`onBehalfOf`). Full guides and API reference live at **[auditstream.dev/docs/typescript](https://auditstream.dev/docs/typescript/)**.
 
 ## Install
 
@@ -15,7 +15,7 @@ Actor context propagation, application event logging, history helpers, and web f
 pnpm add @auditstream/node
 ```
 
-Framework subpaths use optional peer dependencies — install only the framework your app uses (`express`, `hono`, or `next`).
+Framework subpaths use optional peer dependencies — install only the framework your app uses (`express`, `hono`, or `next`). PostgreSQL driver wrapper subpaths (`/pg`, `/postgres-js`, `/neon-http`) require no ORM or driver peer dependencies and work directly with plain `pg`, Kysely, TypeORM, Knex, `postgres.js`, Neon, or Drizzle.
 
 > **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
 
@@ -45,22 +45,47 @@ Actor and context strings must contain valid Unicode and be free of NUL characte
 
 ### Application events (`audit.log`)
 
-Record domain events that do not modify a table through `auditstream.log_event()`. `audit.log()` raises `INVALID_EVENT` before running SQL if `action`, `target`, or `data` contains NUL characters or unpaired surrogates:
+Record domain events that do not modify a table through `auditstream.log_event()`. `audit.log()` passes the raw SQL string to your executor, so tag queries on raw pools with `tagSql(sql)` (or pass a pool already wrapped with `wrapPgPool()`, `wrapPostgresJs()`, or `wrapNeonHttp()`). `audit.log()` raises `INVALID_EVENT` before running SQL if `action`, `target`, or `data` contains NUL characters or unpaired surrogates:
 
 ```ts
-import { audit } from "@auditstream/node";
+import { audit, tagSql } from "@auditstream/node";
 import pg from "pg";
 
 const pool = new pg.Pool({ connectionString: "postgres://localhost/app" });
 
 await audit.as({ type: "user", id: "usr_42" }, () =>
-  audit.log((sql, values) => pool.query(sql, values), {
+  audit.log((sql, values) => pool.query(tagSql(sql), values), {
     action: "invoice.exported",
     target: { invoice_id: 42 },
     data: { format: "csv" },
   }),
 );
 ```
+
+### PostgreSQL driver wrappers (`/pg`, `/postgres-js`, `/neon-http`)
+
+Wrap your PostgreSQL driver directly without installing an ORM adapter — works with plain `pg`, Kysely, TypeORM, Knex, `postgres.js`, Neon WebSocket/HTTP, or Drizzle:
+
+```ts
+import { audit } from "@auditstream/node";
+import { wrapPgPool } from "@auditstream/node/pg";
+import pg from "pg";
+
+const pool = wrapPgPool(new pg.Pool({ connectionString: "postgres://localhost/app" }));
+
+await audit.as({ type: "user", id: "usr_42" }, async () => {
+  await pool.query("UPDATE invoice SET status = $1 WHERE id = $2", ["paid", 42]);
+  // Already-wrapped pools tag audit.log() automatically without calling tagSql():
+  await audit.log((sql, values) => pool.query(sql, values), {
+    action: "invoice.paid",
+    target: { invoice_id: 42 },
+  });
+});
+```
+
+- `@auditstream/node/pg` — `wrapPgPool()` for `node-postgres` (`pg.Pool`) and Neon WebSocket (`@neondatabase/serverless` `Pool`); reads the actor at `pool.query()` entry, preserves `AsyncLocalStorage` across queued `pool.connect()` callbacks, and drops `name` on tagged queries to prevent prepared-statement cache leaks.
+- `@auditstream/node/postgres-js` — `wrapPostgresJs()` for `postgres.js`; tags `sql.unsafe()` across `sql.begin()`, nested `savepoint()`, and `sql.reserve()`, forcing `prepare: false` on tagged queries. Tagged-template calls (`` sql`...` ``) pass through untagged (record `actor = NULL`), so use `sql.unsafe()` or a query builder that compiles to `unsafe()`.
+- `@auditstream/node/neon-http` — `wrapNeonHttp()` for `@neondatabase/serverless` `neon()`; tags `sql.query()` and array-form `sql.transaction([sql.query(...)])` batches. Tagged-template calls (`` sql`...` ``) and callback-form `sql.transaction((txn) => ...)` pass through untagged (record `actor = NULL`), so use `sql.query()` and array-form transactions.
 
 ### Record history and activity queries (`audit.history`, `audit.query`)
 

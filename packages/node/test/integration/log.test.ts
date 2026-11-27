@@ -5,6 +5,7 @@ import { createTestDatabase, stopTestCluster, type TestDatabase } from "@auditst
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AuditLogExecutor, audit, tagSql } from "../../src/index.js";
+import { wrapPgPool } from "../../src/pg.js";
 
 const FIXTURE_DIR = dirname(fileURLToPath(import.meta.url));
 const LOG_EVENT_FIXTURE_SQL = readFileSync(resolve(FIXTURE_DIR, "fixtures/log-event.sql"), "utf8");
@@ -173,5 +174,86 @@ describe("audit.log() Postgres integration", () => {
     await expect(
       appPool.query("INSERT INTO auditstream.changes (op) VALUES ('spoof')"),
     ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("records actor user:usr_42 when running the packages/node README audit.log() snippet pattern", async () => {
+    await audit.as({ type: "user", id: "usr_42" }, () =>
+      audit.log((sql, values) => appPool.query(tagSql(sql), values), {
+        action: "invoice.exported",
+        target: { invoice_id: 42 },
+        data: { format: "csv" },
+      }),
+    );
+
+    const rows = (
+      await adminClient.query<{
+        op: string;
+        record_id: Record<string, unknown> | null;
+        after: Record<string, unknown> | null;
+        actor: Record<string, unknown> | null;
+        actor_source: string | null;
+      }>(
+        `SELECT op, record_id, after, actor, actor_source
+           FROM auditstream.changes
+          WHERE source = 'app' AND op = 'invoice.exported'`,
+      )
+    ).rows;
+
+    expect(rows).toEqual([
+      {
+        op: "invoice.exported",
+        record_id: { invoice_id: 42 },
+        after: { format: "csv" },
+        actor: { type: "user", id: "usr_42" },
+        actor_source: "comment",
+      },
+    ]);
+  });
+
+  it("tags 40 concurrent writes through @auditstream/node/pg wrapPgPool over a pool of 5 without drizzle-orm", async () => {
+    const wrappedPool = wrapPgPool(new pg.Pool({ connectionString: db.appUrl, max: 5 }));
+    const total = 40;
+
+    try {
+      await Promise.all(
+        Array.from({ length: total }, (_, index) =>
+          audit.as(
+            { type: "user", id: `usr_pg_${index}`, tenant: `org_${index % 4}` },
+            async () => {
+              await new Promise((resolveDelay) => setTimeout(resolveDelay, (index * 5) % 17));
+              await audit.log((sql, values) => wrappedPool.query(sql, values), {
+                action: "invoice.pg_wrapped",
+                target: { seq: index },
+              });
+            },
+          ),
+        ),
+      );
+    } finally {
+      await wrappedPool.end();
+    }
+
+    const rows = (
+      await adminClient.query<{
+        record_id: { seq: number };
+        actor: { type: string; id: string; tenant?: string } | null;
+        actor_source: string | null;
+      }>(
+        `SELECT record_id, actor, actor_source
+           FROM auditstream.changes
+          WHERE source = 'app' AND op = 'invoice.pg_wrapped'
+          ORDER BY (record_id->>'seq')::int ASC`,
+      )
+    ).rows;
+
+    expect(rows).toHaveLength(total);
+    for (let i = 0; i < total; i += 1) {
+      expect(rows[i]?.actor).toEqual({
+        type: "user",
+        id: `usr_pg_${i}`,
+        tenant: `org_${i % 4}`,
+      });
+      expect(rows[i]?.actor_source).toBe("comment");
+    }
   });
 });

@@ -36,6 +36,18 @@
     "./next": {
       "types": "./dist/next.d.mts",
       "default": "./dist/next.mjs"
+    },
+    "./pg": {
+      "types": "./dist/pg.d.mts",
+      "default": "./dist/pg.mjs"
+    },
+    "./postgres-js": {
+      "types": "./dist/postgres-js.d.mts",
+      "default": "./dist/postgres-js.mjs"
+    },
+    "./neon-http": {
+      "types": "./dist/neon-http.d.mts",
+      "default": "./dist/neon-http.mjs"
     }
   },
   "scripts": {

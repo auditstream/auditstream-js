@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
-import { audit, decodeScope, isTagged, tagSql } from "@auditstream/node";
 import { describe, expect, it, vi } from "vitest";
+import { audit, decodeScope, isTagged, tagSql } from "../src/index.js";
 import { type PgClientLike, type PgPoolLike, type PgQueryConfig, wrapPgPool } from "../src/pg.js";
 
 interface RecordedQuery {

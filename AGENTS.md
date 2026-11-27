@@ -27,9 +27,9 @@ turbo.json                  Turborepo task graph
 biome.json                  Biome formatting and lint rules
 tsconfig.base.json          strict TS 6.0 config (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `isolatedDeclarations`)
 packages/
-  node/                     @auditstream/node: AsyncLocalStorage context, audit.as(), audit.log(), /express, /hono, /next
+  node/                     @auditstream/node: AsyncLocalStorage context, audit.as(), audit.log(), /express, /hono, /next, /pg, /postgres-js, /neon-http
   prisma/                   @auditstream/prisma: Prisma 7.1+ SQL comments plugin and set_config fallback
-  drizzle/                  @auditstream/drizzle: Drizzle 0.45 wrappers (pg, neon-http, postgres.js) and Drizzle 1.x helper
+  drizzle/                  @auditstream/drizzle: Drizzle 1.x helper and backwards-compatible re-exports of /pg, /neon-http, /postgres-js wrappers
   test-utils/               private Postgres + PgBouncer test harness
 examples/                   example apps (Next.js + Prisma, Hono + Drizzle)
 ```

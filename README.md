@@ -23,9 +23,9 @@ All three packages are ESM-only, zero-dependency on the runtime path, and releas
 
 | Package | npm | Purpose | Docs |
 | --- | --- | --- | --- |
-| `@auditstream/node` | [![@auditstream/node][npm-node-badge]][npm-node-url] | `AsyncLocalStorage` actor scope (`audit.as()`, `audit.current()`), application events (`audit.log()`), record lookups (`audit.history()`), keyset-paginated queries (`audit.query()`), export record parser (`parseExportRecord()`), and Express, Hono, and Next.js integrations | [README](packages/node/README.md) |
+| `@auditstream/node` | [![@auditstream/node][npm-node-badge]][npm-node-url] | `AsyncLocalStorage` actor scope (`audit.as()`, `audit.current()`), ORM-agnostic driver wrappers (`/pg`, `/postgres-js`, `/neon-http`), application events (`audit.log()`), record lookups (`audit.history()`), keyset-paginated queries (`audit.query()`), export record parser (`parseExportRecord()`), and Express, Hono, and Next.js integrations | [README](packages/node/README.md) |
 | `@auditstream/prisma` | [![@auditstream/prisma][npm-prisma-badge]][npm-prisma-url] | Prisma 7 SQL comments plugin (`auditstream()`) and transaction-local `set_config` fallback (`auditTransaction()`) for Prisma Accelerate or proxies that strip comments | [README](packages/prisma/README.md) |
-| `@auditstream/drizzle` | [![@auditstream/drizzle][npm-drizzle-badge]][npm-drizzle-url] | Drizzle 1.x `.comment()` helper (`auditComment()`) and driver wrappers for `pg` / Neon WebSocket (`wrapPgPool`), `postgres.js` (`wrapPostgresJs`), and Neon HTTP (`wrapNeonHttp`) | [README](packages/drizzle/README.md) |
+| `@auditstream/drizzle` | [![@auditstream/drizzle][npm-drizzle-badge]][npm-drizzle-url] | Drizzle 1.x `.comment()` helper (`auditComment()`) and backwards-compatible re-exports of the `pg` / Neon WebSocket (`wrapPgPool`), `postgres.js` (`wrapPostgresJs`), and Neon HTTP (`wrapNeonHttp`) driver wrappers | [README](packages/drizzle/README.md) |
 
 Database migrations, capture triggers, `auditstream verify`, and `auditstream export` live in the [Auditstream Rust engine repository](https://github.com/auditstream/auditstream).
 
@@ -36,6 +36,9 @@ First install the [`auditstream` CLI](https://auditstream.dev/docs/getting-start
 Then install `@auditstream/node` alongside the ORM adapter you use:
 
 ```sh
+# Plain pg / postgres.js / Neon / Kysely / TypeORM / Knex
+pnpm add @auditstream/node
+
 # Prisma 7.1+
 pnpm add @auditstream/node @auditstream/prisma @prisma/client
 

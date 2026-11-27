@@ -45,7 +45,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "peerDependencies": {
-    "@auditstream/node": ">=0.1.0 <1.0.0",
+    "@auditstream/node": ">=0.2.2 <1.0.0",
     "drizzle-orm": "^0.45.2 || >=1.0.0-rc.1 <2.0.0"
   },
   "devDependencies": {

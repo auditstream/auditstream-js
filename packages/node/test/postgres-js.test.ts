@@ -1,5 +1,5 @@
-import { audit, decodeScope, isTagged, tagSql } from "@auditstream/node";
 import { describe, expect, it } from "vitest";
+import { audit, decodeScope, isTagged, tagSql } from "../src/index.js";
 import {
   type PostgresJsLike,
   type PostgresJsTransactionLike,

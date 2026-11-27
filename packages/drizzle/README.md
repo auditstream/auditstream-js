@@ -9,6 +9,8 @@ Drizzle ORM driver wrappers and Drizzle 1.x `.comment()` helper for [Auditstream
 
 `@auditstream/drizzle` forwards the active actor from `@auditstream/node` to database capture triggers across Drizzle 0.45 and 1.x. Full guides and API reference live at **[auditstream.dev/docs/typescript/drizzle](https://auditstream.dev/docs/typescript/drizzle/)**.
 
+> **Not using Drizzle?** The ORM-agnostic driver wrappers (`wrapPgPool`, `wrapPostgresJs`, `wrapNeonHttp`) are exported directly from `@auditstream/node/pg`, `@auditstream/node/postgres-js`, and `@auditstream/node/neon-http` with zero ORM peer dependencies, and re-exported here for backwards compatibility.
+
 ## Install
 
 ```sh

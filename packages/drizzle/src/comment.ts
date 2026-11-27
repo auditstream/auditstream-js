@@ -45,10 +45,11 @@ export type SqlCommenterValues = Record<string, SqlCommenterValue>;
  * - Transaction control statements (`BEGIN`, `COMMIT`, `SAVEPOINT`) have no `.comment()` method.
  * - Drizzle 0.45 has no `.comment()` API.
  *
- * For those paths, use a driver wrapper (`@auditstream/drizzle/pg`,
- * `@auditstream/drizzle/postgres-js`, or `@auditstream/drizzle/neon-http`); wrappers
- * inspect `isTagged()` to avoid double-tagging statements already tagged by `auditComment()`
- * while still disabling server-side named prepared statements (`prepare: false` / dropping `name`).
+ * For those paths, use a driver wrapper (`@auditstream/node/pg`, `@auditstream/node/postgres-js`,
+ * or `@auditstream/node/neon-http`, also re-exported from `@auditstream/drizzle/*` for backwards
+ * compatibility); wrappers inspect `isTagged()` to avoid double-tagging statements already tagged
+ * by `auditComment()` while still disabling server-side named prepared statements
+ * (`prepare: false` / dropping `name`).
  */
 export function auditComment(extra?: Readonly<SqlCommenterValues>): SqlCommenterValues {
   if (extra !== undefined && Object.hasOwn(extra, "auditstream")) {
