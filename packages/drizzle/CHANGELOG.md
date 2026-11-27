@@ -1,5 +1,13 @@
 # @auditstream/drizzle
 
+## 0.2.2
+
+### Patch Changes
+
+- 438baf3: Export the ORM-agnostic PostgreSQL driver wrappers (`wrapPgPool`, `wrapPostgresJs`, and `wrapNeonHttp`) directly from `@auditstream/node/pg`, `@auditstream/node/postgres-js`, and `@auditstream/node/neon-http` with zero ORM peer dependencies, and re-export them from `@auditstream/drizzle/*` for 100% backwards compatibility. Fix the `@auditstream/node` README `audit.log()` example to tag outgoing SQL via `tagSql(sql)` so copy-pasted usage records the active actor instead of `NULL`.
+- 10ec746: Prevent server-side prepared-statement cache leaks on pre-tagged queries (such as Drizzle 1.x `.comment(auditComment())`) by enforcing `prepare: false` in `wrapPostgresJs()` and dropping `name` in `wrapPgPool()` whenever `isTagged(query)` is true. Proxy `sql.reserve()` and support the 2-argument `sql.unsafe(query, options)` overload in `wrapPostgresJs()`, and document `postgres(url, { prepare: false })` for standalone `postgres.js` users of `auditComment()`.
+- 8c9fb0a: Add npm `keywords` and describe each package as part of the Auditstream database audit trail engine, so searches such as "hono audit trail" or "prisma audit log" can find them.
+
 ## 0.2.1
 
 ### Patch Changes

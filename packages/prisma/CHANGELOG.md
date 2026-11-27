@@ -1,5 +1,12 @@
 # @auditstream/prisma
 
+## 0.2.2
+
+### Patch Changes
+
+- e077e39: Document transaction-local `set_config` precedence for nested `audit.as()` scopes inside `auditTransaction()` in JSDoc and README.
+- 8c9fb0a: Add npm `keywords` and describe each package as part of the Auditstream database audit trail engine, so searches such as "hono audit trail" or "prisma audit log" can find them.
+
 ## 0.2.1
 
 ### Patch Changes

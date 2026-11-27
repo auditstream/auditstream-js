@@ -1,5 +1,17 @@
 # @auditstream/node
 
+## 0.2.2
+
+### Patch Changes
+
+- 438baf3: Export the ORM-agnostic PostgreSQL driver wrappers (`wrapPgPool`, `wrapPostgresJs`, and `wrapNeonHttp`) directly from `@auditstream/node/pg`, `@auditstream/node/postgres-js`, and `@auditstream/node/neon-http` with zero ORM peer dependencies, and re-export them from `@auditstream/drizzle/*` for 100% backwards compatibility. Fix the `@auditstream/node` README `audit.log()` example to tag outgoing SQL via `tagSql(sql)` so copy-pasted usage records the active actor instead of `NULL`.
+- b000660: Validate `occurred_at` calendar dates and clock ranges in `parseExportRecord()` using the shared proleptic Gregorian date validator.
+- 892ad3b: Prevent prototype hijacking via `__proto__`, `constructor`, and `prototype` keys (and custom object prototypes) across `audit.as()`, `encodeScope()`, `setConfigValue()`, `tagSql()`, and `decodeScope()`. Harden `isTagged()`, `tagSql()`, and `decodeScope()` with a PostgreSQL-aware SQL lexer and strict sqlcommenter parser so trailing `--` line comments receive a newline before `/*auditstream='...'*/`, malformed or embedded `,auditstream='...'` comments never suppress tagging, and `decodeScope()` rejects NUL and unpaired UTF-16 surrogates even inside shadowed duplicate JSON keys.
+- cca493d: Parameterize `@auditstream/node/hono` (`HonoAuditOptions<E extends Env = any>`, `auditstream<E extends Env = any>()`) and `@auditstream/node/express` (`ExpressAuditOptions<TRequest extends Request = Request, TLocals extends Record<string, any> = Record<string, unknown>>`, `auditstream<TRequest, TLocals>()`) so callers get strongly typed `Context<AppEnv>`, `AuthedRequest`, and `res.locals` inside `actor` and `context` resolvers without inline `as` assertions, while remaining 100% backwards compatible. Guard `@auditstream/node/express` against calling `next()` when a resolver already sent or ended `res`.
+- a359bc3: Reject NUL and unpaired UTF-16 surrogates in actor and context payloads (including `decodeScope()` for PostgreSQL parity), `audit.log()` events (`INVALID_EVENT`), and `audit.query()` / `audit.history()` text filters and record IDs (`INVALID_QUERY`) before executing SQL. Also reject malformed pagination cursors and out-of-range `since`/`until` timestamp bounds (`24:00:00`, timezone offsets beyond `±15:59`, and `Date` years outside `0001`–`9999`) with `INVALID_QUERY`.
+- 8c9fb0a: Add npm `keywords` and describe each package as part of the Auditstream database audit trail engine, so searches such as "hono audit trail" or "prisma audit log" can find them.
+- e161cda: Table-qualify `ORDER BY changes.occurred_at DESC, changes.id DESC` in `audit.history()` and `audit.query()` so PostgreSQL orders by native `timestamptz`/`bigint` columns instead of the `to_char(...)` and `id::text` SELECT aliases, fixing index usage and keyset pagination across power-of-10 `id` ties.
+
 ## 0.2.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@auditstream/node",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Request actor context, Hono, Express and Next.js middleware, and driver wrappers for the Auditstream database audit trail engine",
   "keywords": [
     "audit-trail",
