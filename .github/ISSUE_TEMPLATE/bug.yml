@@ -33,11 +33,11 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Package versions, Node/Bun/Deno/Workers runtime, ORM/driver versions, and Postgres/pooler setup.
+      description: Package versions, Node/Bun/Deno/Workers runtime, ORM/driver versions, and PostgreSQL/pooler setup.
       placeholder: |
         - Packages: @auditstream/node 0.1.0, @auditstream/prisma 0.1.0
         - Runtime: Node 22.23
         - ORM/driver: @prisma/client 7.10.1, pg 8.23.1
-        - Postgres/pooler: PostgreSQL 16.15 behind PgBouncer 1.26
+        - PostgreSQL/pooler: PostgreSQL 16.15 behind PgBouncer 1.26
     validations:
       required: true

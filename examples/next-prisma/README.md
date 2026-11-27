@@ -116,7 +116,7 @@ You can also open `http://127.0.0.1:3000/` to submit the `auditAction` Server Ac
 
 ## Run the smoke test
 
-The smoke test starts Postgres with `@auditstream/test-utils`, runs `prisma migrate deploy`, builds Next.js, and runs 40 concurrent requests:
+The smoke test starts PostgreSQL with `@auditstream/test-utils`, runs `prisma migrate deploy`, builds Next.js, and runs 40 concurrent requests:
 
 ```bash
 pnpm --filter ./examples/next-prisma test:smoke

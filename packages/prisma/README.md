@@ -17,7 +17,7 @@ pnpm add @auditstream/prisma @auditstream/node @prisma/client
 
 Install the `prisma` CLI as a dev dependency if needed. The `prisma` CLI is never a peer dependency.
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
+> **Prerequisite:** Generate the capture migration with `auditstream init --migrations prisma` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/), then apply it on a direct (non-pooled) PostgreSQL connection with `prisma migrate deploy`. `auditstream init` only writes migration files; run `auditstream verify` to confirm the audit schema and capture triggers are installed.
 
 ## Quick start
 
@@ -77,7 +77,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 | Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
 | PostgreSQL | `15` to `19` |
 | Prisma | `@prisma/client` `7.1` or newer within `7.x` (tested on `7.10.1`) |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later; this adapter is not yet tested on Workers) |
 
 Prisma 6 is not supported. Prisma 8 support follows its stable release. The `prisma` CLI is never a peer dependency.
 

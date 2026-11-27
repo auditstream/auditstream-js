@@ -31,7 +31,7 @@ Database migrations, capture triggers, `auditstream verify`, and `auditstream ex
 
 ## Install
 
-First install the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) (`npm i -g auditstream` or `brew install auditstream/tap/auditstream`) and run `auditstream init` to create the database capture triggers.
+First install the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) (`npm i -g auditstream` or `brew install auditstream/tap/auditstream`), then generate the capture migration with `auditstream init` and apply it on a direct (non-pooled) PostgreSQL connection with your migration tool (Prisma Migrate, Drizzle Kit, or `psql`). `auditstream init` only writes migration files; the audit schema and capture triggers exist once the migration is applied.
 
 Then install `@auditstream/node` alongside the ORM adapter you use:
 

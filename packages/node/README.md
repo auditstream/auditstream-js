@@ -17,7 +17,7 @@ pnpm add @auditstream/node
 
 Framework subpaths use optional peer dependencies — install only the framework your app uses (`express`, `hono`, or `next`). PostgreSQL driver wrapper subpaths (`/pg`, `/postgres-js`, `/neon-http`) require no ORM or driver peer dependencies and work directly with plain `pg`, Kysely, TypeORM, Knex, `postgres.js`, Neon, or Drizzle.
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
+> **Prerequisite:** Generate the capture migration with `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/), then apply it on a direct (non-pooled) PostgreSQL connection with your migration tool (Prisma Migrate, Drizzle Kit, or `psql`). `auditstream init` only writes migration files; run `auditstream verify` to confirm the audit schema and capture triggers are installed.
 
 ## Quick start
 

@@ -25,7 +25,7 @@ pnpm add postgres
 pnpm add @neondatabase/serverless
 ```
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
+> **Prerequisite:** Generate the capture migration with `auditstream init --migrations drizzle` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/), then apply it on a direct (non-pooled) PostgreSQL connection with your Drizzle migration workflow. `auditstream init` only writes migration files; run `auditstream verify` to confirm the audit schema and capture triggers are installed.
 
 ## Quick start
 
@@ -142,7 +142,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 | Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
 | PostgreSQL | `15` to `19` |
 | Drizzle | `0.45` (`^0.45.2`) and `1.x` (`>=1.0.0-rc.1 <2.0.0`) |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later; this adapter is not yet tested on Workers) |
 
 ## Context and limits
 
