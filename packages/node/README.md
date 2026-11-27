@@ -171,6 +171,27 @@ app.use(
 );
 ```
 
+For typed `Hono<AppEnv>` apps, pass your `Env` type argument (`auditstream<AppEnv>({ ... })`) or wrap with `createFactory<AppEnv>().createMiddleware(...)` so `c.get(...)`, `c.var`, and `c.env` stay strongly typed without assertions:
+
+```ts
+import { auditstream } from "@auditstream/node/hono";
+import { Hono } from "hono";
+import type { JwtVariables } from "hono/jwt";
+
+type AppEnv = { Variables: JwtVariables<{ sub?: unknown } | undefined> };
+const app = new Hono<AppEnv>();
+app.use(
+  "/api/*",
+  auditstream<AppEnv>({
+    actor: (c) => {
+      const rawSub = c.get("jwtPayload")?.sub;
+      const sub = typeof rawSub === "string" ? rawSub.trim() : "";
+      return sub.length > 0 ? { type: "user", id: sub } : undefined;
+    },
+  }),
+);
+```
+
 #### Next.js Route Handlers and Server Actions (`@auditstream/node/next`)
 
 ```ts
