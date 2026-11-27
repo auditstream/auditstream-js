@@ -1,7 +1,17 @@
 {
   "name": "@auditstream/drizzle",
   "version": "0.2.1",
-  "description": "Drizzle ORM wrappers and comment helpers for Auditstream",
+  "description": "Drizzle ORM wrappers and comment helpers for the Auditstream database audit trail engine",
+  "keywords": [
+    "audit-trail",
+    "audit-log",
+    "audit",
+    "database",
+    "postgresql",
+    "sqlcommenter",
+    "drizzle",
+    "drizzle-orm"
+  ],
   "type": "module",
   "license": "MIT",
   "homepage": "https://auditstream.dev/docs/typescript/drizzle/",

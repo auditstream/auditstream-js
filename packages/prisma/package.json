@@ -1,7 +1,18 @@
 {
   "name": "@auditstream/prisma",
   "version": "0.2.1",
-  "description": "Prisma 7 SQL comments plugin and set_config fallback for Auditstream",
+  "description": "Prisma 7 SQL comments plugin and set_config fallback for the Auditstream database audit trail engine",
+  "keywords": [
+    "audit-trail",
+    "audit-log",
+    "audit",
+    "database",
+    "postgresql",
+    "sqlcommenter",
+    "prisma",
+    "prisma-client",
+    "prisma-extension"
+  ],
   "type": "module",
   "license": "MIT",
   "homepage": "https://auditstream.dev/docs/typescript/prisma/",
