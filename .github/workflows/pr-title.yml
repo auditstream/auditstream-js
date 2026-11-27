@@ -18,6 +18,6 @@ jobs:
   pr-title:
     permissions:
       pull-requests: read
-    uses: auditstream/.github/.github/workflows/reusable-pr-title.yml@85d9a13ddc78591528d7b59db8138b1c0864e2d5 # main
+    uses: auditstream/.github/.github/workflows/reusable-pr-title.yml@a175503e97a978c4444faecc5cf258e3766529e2 # v1.0.0
     with:
       scopes: "node|prisma|drizzle|docs|ci|deps"
