@@ -1,11 +1,15 @@
-import { audit } from "@auditstream/node";
+import { audit, tagSql } from "@auditstream/node";
 import { createTestDatabase, stopTestCluster, type TestDatabase } from "@auditstream/test-utils";
-import { eq } from "drizzle-orm";
+import { sql as drizzleSql, eq } from "drizzle-orm";
 import { integer, pgTable, text } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/postgres-js";
+import { sql as drizzleSqlV1, eq as eqV1 } from "drizzle-orm-v1";
+import { integer as integerV1, pgTable as pgTableV1, text as textV1 } from "drizzle-orm-v1/pg-core";
+import { drizzle as drizzleV1 } from "drizzle-orm-v1/postgres-js";
 import pg from "pg";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { auditComment } from "../../src/comment.js";
 import { wrapPostgresJs } from "../../src/postgres-js.js";
 
 const invoice = pgTable("invoice", {
@@ -13,9 +17,14 @@ const invoice = pgTable("invoice", {
   status: text("status"),
 });
 
+const invoiceV1 = pgTableV1("invoice", {
+  id: integerV1("id").primaryKey(),
+  status: textV1("status"),
+});
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
+describe("wrapPostgresJs() + Drizzle postgres.js integration", () => {
   let db: TestDatabase;
   let adminClient: pg.Client;
 
@@ -134,13 +143,15 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
 
     try {
       await orm.insert(invoice).values({ id: 500, status: "init" });
+      const preparedStmt = orm
+        .update(invoice)
+        .set({ status: drizzleSql`${drizzleSql.placeholder("status")}` })
+        .where(eq(invoice.id, 500))
+        .prepare("upd1");
 
       for (let i = 0; i < 40; i += 1) {
         await audit.as({ type: "user", id: `prep_${i}` }, () =>
-          orm
-            .update(invoice)
-            .set({ status: `s_${i}` })
-            .where(eq(invoice.id, 500)),
+          preparedStmt.execute({ status: `s_${i}` }),
         );
       }
 
@@ -210,5 +221,152 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
         expect(row?.actor_source).toBe("comment");
       }
     }
+  });
+
+  it("leaves zero auditstream= entries in pg_prepared_statements when Drizzle 1.x .comment(auditComment()).prepare() runs through wrapPostgresJs()", async () => {
+    const startId = await resetAuditState();
+    const sql = wrapPostgresJs(postgres(db.appUrl, { max: 1, prepare: true }));
+    const ormV1 = drizzleV1({ client: sql });
+
+    try {
+      await ormV1.insert(invoiceV1).values({ id: 600, status: "init" });
+
+      for (let i = 0; i < 40; i += 1) {
+        await audit.as({ type: "user", id: `v1_prep_${i}` }, async () => {
+          // Calling .prepare() causes Drizzle 1.x PostgresJsSession to send `{ prepare: true }`.
+          const preparedStmt = ormV1
+            .update(invoiceV1)
+            .set({ status: drizzleSqlV1`${drizzleSqlV1.placeholder("status")}` })
+            .where(eqV1(invoiceV1.id, 600))
+            .comment(auditComment())
+            .prepare(`v1_upd_${i}`);
+          await preparedStmt.execute({ status: `v1_${i}` });
+        });
+      }
+
+      // Pre-tagged SQL executed inside AND outside an active scope also disables prepare.
+      const preTaggedInside = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+        actor: { type: "service", id: "v1_pre_inside" },
+      });
+      await audit.as({ type: "user", id: "v1_outer_ignored" }, () =>
+        sql.unsafe(preTaggedInside, ["inside", 600], { prepare: true }),
+      );
+
+      const preTaggedOutside = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+        actor: { type: "service", id: "v1_pre_outside" },
+      });
+      await sql.unsafe(preTaggedOutside, ["outside", 600], { prepare: true });
+
+      const prepared = await sql.unsafe<Array<{ name: string; statement: string }>>(
+        "SELECT name, statement FROM pg_prepared_statements",
+      );
+      const leaked = prepared.filter((row) => row.statement.includes("auditstream="));
+      expect(leaked).toEqual([]);
+    } finally {
+      await sql.end();
+    }
+
+    const updates = (
+      await adminClient.query<{ actor_id: string | null; actor_source: string | null }>(
+        `SELECT actor->>'id' AS actor_id, actor_source
+           FROM auditstream.changes
+          WHERE id > $1 AND table_name = 'invoice' AND op = 'UPDATE'
+          ORDER BY id ASC`,
+        [startId],
+      )
+    ).rows;
+
+    expect(updates).toHaveLength(42);
+    for (let i = 0; i < 40; i += 1) {
+      expect(updates[i]).toEqual({ actor_id: `v1_prep_${i}`, actor_source: "comment" });
+    }
+    expect(updates[40]).toEqual({ actor_id: "v1_pre_inside", actor_source: "comment" });
+    expect(updates[41]).toEqual({ actor_id: "v1_pre_outside", actor_source: "comment" });
+  });
+
+  it("tags writes on sql.reserve() connections and handles the 2-arg unsafe(query, options) overload with prepare: false", async () => {
+    const startId = await resetAuditState();
+    const sql = wrapPostgresJs(postgres(db.appUrl, { max: 1, prepare: true }));
+
+    try {
+      await sql.unsafe("INSERT INTO invoice (id, status) VALUES ($1, $2)", [700, "seed"]);
+
+      // 2-argument unsafe(query, options) overload directly on root client (both default simple and simple: false).
+      const unsafeTwoArg = sql.unsafe as unknown as (
+        query: string,
+        opts: { prepare?: boolean; simple?: boolean },
+      ) => Promise<unknown>;
+      await audit.as({ type: "user", id: "two_arg_root_1" }, () =>
+        unsafeTwoArg("UPDATE invoice SET status = 'two_arg_1' WHERE id = 700", { prepare: true }),
+      );
+      await audit.as({ type: "user", id: "two_arg_root_2" }, () =>
+        unsafeTwoArg("UPDATE invoice SET status = 'two_arg_2' WHERE id = 700", {
+          prepare: true,
+          simple: false,
+        }),
+      );
+
+      // Reserved connection: tagged across distinct scopes, 2-arg overload, pre-tagged, tagged template, and unscoped.
+      const reserved = await sql.reserve();
+      try {
+        await audit.as({ type: "user", id: "reserved_1" }, () =>
+          reserved.unsafe("UPDATE invoice SET status = $1 WHERE id = $2", ["res_1", 700], {
+            prepare: true,
+          }),
+        );
+        const reservedUnsafeTwoArg = reserved.unsafe as unknown as (
+          query: string,
+          opts: { prepare?: boolean; simple?: boolean },
+        ) => Promise<unknown>;
+        await audit.as({ type: "user", id: "reserved_2" }, () =>
+          reservedUnsafeTwoArg("UPDATE invoice SET status = 'res_2' WHERE id = 700", {
+            prepare: true,
+            simple: false,
+          }),
+        );
+
+        // Pre-tagged write outside any scope on reserved connection still disables prepare.
+        const preTaggedReserved = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+          actor: { type: "service", id: "reserved_pre" },
+        });
+        await reserved.unsafe(preTaggedReserved, ["res_pre", 700], { prepare: true });
+
+        // Tagged template on reserved connection passes through cleanly.
+        const ping = await reserved`SELECT 1 AS ok`;
+        expect(ping[0]?.ok).toBe(1);
+
+        // Unscoped write on reserved connection leaves actor NULL.
+        await reserved.unsafe("UPDATE invoice SET status = $1 WHERE id = $2", ["res_none", 700]);
+      } finally {
+        reserved.release();
+      }
+
+      const prepared = await sql.unsafe<Array<{ name: string; statement: string }>>(
+        "SELECT name, statement FROM pg_prepared_statements",
+      );
+      const leaked = prepared.filter((row) => row.statement.includes("auditstream="));
+      expect(leaked).toEqual([]);
+    } finally {
+      await sql.end();
+    }
+
+    const updates = (
+      await adminClient.query<{ actor_id: string | null; actor_source: string | null }>(
+        `SELECT actor->>'id' AS actor_id, actor_source
+           FROM auditstream.changes
+          WHERE id > $1 AND table_name = 'invoice' AND op = 'UPDATE'
+          ORDER BY id ASC`,
+        [startId],
+      )
+    ).rows;
+
+    expect(updates).toEqual([
+      { actor_id: "two_arg_root_1", actor_source: "comment" },
+      { actor_id: "two_arg_root_2", actor_source: "comment" },
+      { actor_id: "reserved_1", actor_source: "comment" },
+      { actor_id: "reserved_2", actor_source: "comment" },
+      { actor_id: "reserved_pre", actor_source: "comment" },
+      { actor_id: null, actor_source: null },
+    ]);
   });
 });
