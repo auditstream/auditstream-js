@@ -77,7 +77,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 | Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
 | PostgreSQL | `15` to `19` |
 | Prisma | `@prisma/client` `7.1` or newer within `7.x` (tested on `7.10.1`) |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later; this adapter is not yet tested on Workers) |
 
 Prisma 6 is not supported. Prisma 8 support follows its stable release. The `prisma` CLI is never a peer dependency.
 

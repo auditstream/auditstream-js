@@ -142,7 +142,7 @@ await audit.as({ type: "user", id: "usr_42" }, () =>
 | Node.js | `22.12` or newer (CI tests `22`, `24`, and `26`) |
 | PostgreSQL | `15` to `19` |
 | Drizzle | `0.45` (`^0.45.2`) and `1.x` (`>=1.0.0-rc.1 <2.0.0`) |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later; this adapter is not yet tested on Workers) |
 
 ## Context and limits
 
