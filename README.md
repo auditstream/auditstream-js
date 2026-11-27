@@ -97,6 +97,7 @@ pnpm test:integration    # Live PostgreSQL + PgBouncer integration suite (requir
 ## Contributing and security
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+Ask questions in [GitHub Discussions](https://github.com/auditstream/auditstream/discussions) or chat on the [Auditstream Discord](https://auditstream.dev/discord).
 Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
