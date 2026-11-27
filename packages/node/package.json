@@ -1,7 +1,21 @@
 {
   "name": "@auditstream/node",
   "version": "0.2.1",
-  "description": "Actor context propagation and event helpers for Auditstream",
+  "description": "Request actor context, Hono, Express and Next.js middleware, and driver wrappers for the Auditstream database audit trail engine",
+  "keywords": [
+    "audit-trail",
+    "audit-log",
+    "audit",
+    "database",
+    "postgresql",
+    "sqlcommenter",
+    "asynclocalstorage",
+    "middleware",
+    "hono",
+    "express",
+    "nextjs",
+    "ai-agents"
+  ],
   "type": "module",
   "license": "MIT",
   "homepage": "https://auditstream.dev/docs/typescript/",
