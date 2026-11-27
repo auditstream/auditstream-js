@@ -4,36 +4,24 @@
 
 ```ts
 
-// @public
-export interface PgClientLike {
-    query: (...args: never[]) => unknown;
-}
+import { PgClientLike } from '@auditstream/node/pg';
+import { PgPoolLike } from '@auditstream/node/pg';
+import { PgQueryConfig } from '@auditstream/node/pg';
+import { PgSubmittable } from '@auditstream/node/pg';
+import { wrapPgPool } from '@auditstream/node/pg';
 
-// @public
-export interface PgPoolLike {
-    connect?: (...args: never[]) => unknown;
-    on: (event: "connect", listener: (client: unknown) => void) => unknown;
-    query: (...args: never[]) => unknown;
-}
+export { PgClientLike }
 
-// @public
-export interface PgQueryConfig {
-    [key: string]: unknown;
-    name?: string | undefined;
-    text: string;
-    values?: unknown[] | undefined;
-}
+export { PgPoolLike }
 
-// @public
-export interface PgSubmittable {
-    submit: (...args: unknown[]) => unknown;
-}
+export { PgQueryConfig }
+
+export { PgSubmittable }
 
 // @public
 export const SUBPATH: "@auditstream/drizzle/pg";
 
-// @public
-export function wrapPgPool<TPool extends PgPoolLike>(pool: TPool): TPool;
+export { wrapPgPool }
 
 // (No @packageDocumentation comment for this package)
 

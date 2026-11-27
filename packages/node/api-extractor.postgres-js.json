@@ -1,0 +1,8 @@
+{
+  "extends": "../../api-extractor.base.json",
+  "projectFolder": ".",
+  "mainEntryPointFilePath": "<projectFolder>/dist/postgres-js.d.mts",
+  "apiReport": {
+    "reportFileName": "node-postgres-js.api.md"
+  }
+}

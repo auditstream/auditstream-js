@@ -4,28 +4,21 @@
 
 ```ts
 
-// @public
-export interface PostgresJsLike extends PostgresJsTransactionLike {
-    begin: (...args: never[]) => unknown;
-}
+import { PostgresJsLike } from '@auditstream/node/postgres-js';
+import { PostgresJsTransactionLike } from '@auditstream/node/postgres-js';
+import { PostgresJsUnsafeOptions } from '@auditstream/node/postgres-js';
+import { wrapPostgresJs } from '@auditstream/node/postgres-js';
 
-// @public
-export interface PostgresJsTransactionLike {
-    savepoint?: (...args: never[]) => unknown;
-    unsafe: (...args: never[]) => unknown;
-}
+export { PostgresJsLike }
 
-// @public
-export interface PostgresJsUnsafeOptions {
-    [key: string]: unknown;
-    prepare?: boolean | undefined;
-}
+export { PostgresJsTransactionLike }
+
+export { PostgresJsUnsafeOptions }
 
 // @public
 export const SUBPATH: "@auditstream/drizzle/postgres-js";
 
-// @public
-export function wrapPostgresJs<TSql extends PostgresJsLike>(sql: TSql): TSql;
+export { wrapPostgresJs }
 
 // (No @packageDocumentation comment for this package)
 
