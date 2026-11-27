@@ -23,7 +23,7 @@ const invoiceV1 = pgTableV1("invoice", {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe("wrapPgPool() + Drizzle 0.45 node-postgres integration", () => {
+describe("wrapPgPool() + Drizzle node-postgres integration", () => {
   let db: TestDatabase;
   let adminClient: pg.Client;
 

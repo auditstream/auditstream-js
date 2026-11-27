@@ -1,9 +1,9 @@
 import { audit, tagSql } from "@auditstream/node";
 import { createTestDatabase, stopTestCluster, type TestDatabase } from "@auditstream/test-utils";
-import { eq } from "drizzle-orm";
+import { sql as drizzleSql, eq } from "drizzle-orm";
 import { integer, pgTable, text } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq as eqV1 } from "drizzle-orm-v1";
+import { sql as drizzleSqlV1, eq as eqV1 } from "drizzle-orm-v1";
 import { integer as integerV1, pgTable as pgTableV1, text as textV1 } from "drizzle-orm-v1/pg-core";
 import { drizzle as drizzleV1 } from "drizzle-orm-v1/postgres-js";
 import pg from "pg";
@@ -24,7 +24,7 @@ const invoiceV1 = pgTableV1("invoice", {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
+describe("wrapPostgresJs() + Drizzle postgres.js integration", () => {
   let db: TestDatabase;
   let adminClient: pg.Client;
 
@@ -143,13 +143,15 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
 
     try {
       await orm.insert(invoice).values({ id: 500, status: "init" });
+      const preparedStmt = orm
+        .update(invoice)
+        .set({ status: drizzleSql`${drizzleSql.placeholder("status")}` })
+        .where(eq(invoice.id, 500))
+        .prepare("upd1");
 
       for (let i = 0; i < 40; i += 1) {
         await audit.as({ type: "user", id: `prep_${i}` }, () =>
-          orm
-            .update(invoice)
-            .set({ status: `s_${i}` })
-            .where(eq(invoice.id, 500)),
+          preparedStmt.execute({ status: `s_${i}` }),
         );
       }
 
@@ -221,7 +223,7 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
     }
   });
 
-  it("leaves zero auditstream= entries in pg_prepared_statements when Drizzle 1.x .comment(auditComment()) runs through wrapPostgresJs()", async () => {
+  it("leaves zero auditstream= entries in pg_prepared_statements when Drizzle 1.x .comment(auditComment()).prepare() runs through wrapPostgresJs()", async () => {
     const startId = await resetAuditState();
     const sql = wrapPostgresJs(postgres(db.appUrl, { max: 1, prepare: true }));
     const ormV1 = drizzleV1({ client: sql });
@@ -230,16 +232,26 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
       await ormV1.insert(invoiceV1).values({ id: 600, status: "init" });
 
       for (let i = 0; i < 40; i += 1) {
-        await audit.as({ type: "user", id: `v1_prep_${i}` }, () =>
-          ormV1
+        await audit.as({ type: "user", id: `v1_prep_${i}` }, async () => {
+          // Calling .prepare() causes Drizzle 1.x PostgresJsSession to send `{ prepare: true }`.
+          const preparedStmt = ormV1
             .update(invoiceV1)
-            .set({ status: `v1_${i}` })
+            .set({ status: drizzleSqlV1`${drizzleSqlV1.placeholder("status")}` })
             .where(eqV1(invoiceV1.id, 600))
-            .comment(auditComment()),
-        );
+            .comment(auditComment())
+            .prepare(`v1_upd_${i}`);
+          await preparedStmt.execute({ status: `v1_${i}` });
+        });
       }
 
-      // Pre-tagged SQL executed outside any active scope also disables prepare.
+      // Pre-tagged SQL executed inside AND outside an active scope also disables prepare.
+      const preTaggedInside = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
+        actor: { type: "service", id: "v1_pre_inside" },
+      });
+      await audit.as({ type: "user", id: "v1_outer_ignored" }, () =>
+        sql.unsafe(preTaggedInside, ["inside", 600], { prepare: true }),
+      );
+
       const preTaggedOutside = tagSql("UPDATE invoice SET status = $1 WHERE id = $2", {
         actor: { type: "service", id: "v1_pre_outside" },
       });
@@ -264,11 +276,12 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
       )
     ).rows;
 
-    expect(updates).toHaveLength(41);
+    expect(updates).toHaveLength(42);
     for (let i = 0; i < 40; i += 1) {
       expect(updates[i]).toEqual({ actor_id: `v1_prep_${i}`, actor_source: "comment" });
     }
-    expect(updates[40]).toEqual({ actor_id: "v1_pre_outside", actor_source: "comment" });
+    expect(updates[40]).toEqual({ actor_id: "v1_pre_inside", actor_source: "comment" });
+    expect(updates[41]).toEqual({ actor_id: "v1_pre_outside", actor_source: "comment" });
   });
 
   it("tags writes on sql.reserve() connections and handles the 2-arg unsafe(query, options) overload with prepare: false", async () => {
@@ -293,7 +306,7 @@ describe("wrapPostgresJs() + Drizzle 0.45 postgres.js integration", () => {
         }),
       );
 
-      // Reserved connection: tagged across distinct scopes, 2-arg overload, Drizzle, pre-tagged, and unscoped.
+      // Reserved connection: tagged across distinct scopes, 2-arg overload, pre-tagged, tagged template, and unscoped.
       const reserved = await sql.reserve();
       try {
         await audit.as({ type: "user", id: "reserved_1" }, () =>

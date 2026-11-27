@@ -30,13 +30,11 @@ export interface PostgresJsTransactionLike {
 export interface PostgresJsLike extends PostgresJsTransactionLike {
   /** Starts an interactive database transaction. */
   begin: (...args: never[]) => unknown;
-  /** Reserves a dedicated connection from the pool. */
-  reserve?: (...args: never[]) => unknown;
 }
 
 const wrappedClients = new WeakSet<object>();
 
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
     (typeof value === "object" || typeof value === "function") &&
     value !== null &&
@@ -61,7 +59,7 @@ function buildNextOptions(queryOptions: unknown): PostgresJsUnsafeOptions {
     return { prepare: false };
   }
   // Match postgres.js `'simple' in options` semantics: throws TypeError on null/primitives
-  // and retains prototype-inherited or non-enumerable `simple` without double-reading own getters.
+  // and retains prototype-inherited `simple` while forcing `prepare: false`.
   const hasSimple = "simple" in (queryOptions as object);
   const nextOptions: PostgresJsUnsafeOptions = {
     ...(queryOptions as PostgresJsUnsafeOptions),
@@ -79,6 +77,10 @@ function createUnsafeWrapper(
   const rawUnsafe = target.unsafe as (...args: unknown[]) => unknown;
 
   return function wrappedUnsafe(query: string, ...rest: unknown[]): unknown {
+    if (typeof query !== "string") {
+      return rawUnsafe.call(target, query, ...rest);
+    }
+
     const alreadyTagged = isTagged(query);
     const scope = alreadyTagged ? undefined : audit.current();
 
@@ -96,28 +98,48 @@ function createUnsafeWrapper(
   };
 }
 
-function wrapTransactionCallback<TArgs extends unknown[]>(args: TArgs): TArgs {
-  // Both sql.begin(cb) / sql.begin(options, cb) and tx.savepoint(cb) / tx.savepoint(name, cb)
-  // pass the callback as the last argument.
-  const lastIndex = args.length - 1;
-  if (lastIndex < 0) {
+function findBeginCallbackIndex(args: readonly unknown[]): number {
+  // Match postgres.js begin(options, fn): `!fn && (fn = options, options = '')`.
+  if (typeof args[1] === "function") {
+    return 1;
+  }
+  if (!args[1] && typeof args[0] === "function") {
+    return 0;
+  }
+  return -1;
+}
+
+function findSavepointCallbackIndex(args: readonly unknown[]): number {
+  // Match postgres.js savepoint(name, fn): skip template-string calls (`Array.isArray(name.raw)`),
+  // wrap args[0] when 1 arg, else wrap args[1].
+  const first = args[0];
+  if (first && Array.isArray((first as { raw?: unknown }).raw)) {
+    return -1;
+  }
+  if (args.length === 1) {
+    return typeof first === "function" ? 0 : -1;
+  }
+  return typeof args[1] === "function" ? 1 : -1;
+}
+
+function wrapCallbackArgs<TArgs extends unknown[]>(args: TArgs, callbackIndex: number): TArgs {
+  if (callbackIndex < 0) {
     return args;
   }
-  const last = args[lastIndex];
-  if (typeof last !== "function") {
-    return args;
-  }
-  const userCallback = last as (tx: PostgresJsTransactionLike) => unknown;
+  const userCallback = args[callbackIndex] as (tx: PostgresJsTransactionLike) => unknown;
   const wrappedArgs = [...args] as TArgs;
-  wrappedArgs[lastIndex] = (tx: PostgresJsTransactionLike): unknown => userCallback(wrapClient(tx));
+  wrappedArgs[callbackIndex] = (tx: PostgresJsTransactionLike): unknown =>
+    userCallback(wrapClient(tx));
   return wrappedArgs;
 }
 
 function wrapCallbackMethod(
   target: PostgresJsTransactionLike,
   method: (...args: unknown[]) => unknown,
+  findIndex: (args: readonly unknown[]) => number,
 ): (...args: unknown[]) => unknown {
-  return (...args: unknown[]): unknown => method.apply(target, wrapTransactionCallback(args));
+  return (...args: unknown[]): unknown =>
+    method.apply(target, wrapCallbackArgs(args, findIndex(args)));
 }
 
 function wrapReserveMethod(
@@ -126,34 +148,46 @@ function wrapReserveMethod(
 ): (...args: unknown[]) => unknown {
   return (...args: unknown[]): unknown => {
     const result = method.apply(target, args);
-    if (isPromiseLike(result)) {
-      return result.then((reserved) => wrapClient(reserved as PostgresJsTransactionLike));
+    if (!isThenable(result)) {
+      return wrapClient(result as PostgresJsTransactionLike);
     }
-    return wrapClient(result as PostgresJsTransactionLike);
+    return Promise.resolve(result).then((reserved) =>
+      wrapClient(reserved as PostgresJsTransactionLike),
+    );
   };
 }
 
-function getWrappedClientMethod(
+function resolveClientProperty(
   target: PostgresJsTransactionLike,
   prop: string | symbol,
+  receiver: unknown,
   unsafeWrapper: (query: string, ...rest: unknown[]) => unknown,
 ): unknown {
   if (prop === "unsafe") {
     return unsafeWrapper;
   }
-  if (prop === "begin" || prop === "savepoint") {
-    const fn = Reflect.get(target, prop);
-    return typeof fn === "function"
-      ? wrapCallbackMethod(target, fn as (...args: unknown[]) => unknown)
-      : undefined;
+  const value: unknown = Reflect.get(target, prop, receiver);
+  if (typeof value !== "function") {
+    return value;
+  }
+  if (prop === "begin") {
+    return wrapCallbackMethod(
+      target,
+      value as (...args: unknown[]) => unknown,
+      findBeginCallbackIndex,
+    );
+  }
+  if (prop === "savepoint") {
+    return wrapCallbackMethod(
+      target,
+      value as (...args: unknown[]) => unknown,
+      findSavepointCallbackIndex,
+    );
   }
   if (prop === "reserve") {
-    const fn = Reflect.get(target, prop);
-    return typeof fn === "function"
-      ? wrapReserveMethod(target, fn as (...args: unknown[]) => unknown)
-      : undefined;
+    return wrapReserveMethod(target, value as (...args: unknown[]) => unknown);
   }
-  return undefined;
+  return value;
 }
 
 function wrapClient<TClient extends PostgresJsTransactionLike>(client: TClient): TClient {
@@ -168,8 +202,7 @@ function wrapClient<TClient extends PostgresJsTransactionLike>(client: TClient):
 
   const proxy = new Proxy(client, {
     get(target, prop, receiver) {
-      const wrapped = getWrappedClientMethod(target, prop, unsafeWrapper);
-      return wrapped !== undefined ? wrapped : Reflect.get(target, prop, receiver);
+      return resolveClientProperty(target, prop, receiver, unsafeWrapper);
     },
   });
 

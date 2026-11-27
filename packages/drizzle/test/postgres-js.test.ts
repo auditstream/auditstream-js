@@ -52,7 +52,8 @@ function createFakePostgresJs(): FakePostgresJs {
 
   // Mirrors real postgres.js unsafe(string, args = [], options = {}) runtime behavior:
   // - 2 args with non-array 2nd arg: treats 2nd arg as options, args = []
-  // - 3 args with non-array 2nd arg: crashes just like postgres.js connection.js (q.args.forEach)
+  // - invalid null/primitive options: throws TypeError synchronously (`'simple' in options`)
+  // - 3 args with non-array 2nd arg: rejects asynchronously
   const recordUnsafe = (
     scope: RecordedUnsafe["scope"],
     query: string,
@@ -66,7 +67,10 @@ function createFakePostgresJs(): FakePostgresJs {
       queryOptions = firstArg as PostgresJsUnsafeOptions;
       parameters = [];
     } else if (firstArg !== undefined && !Array.isArray(firstArg)) {
-      throw new TypeError("q.args.forEach is not a function");
+      if (queryOptions !== undefined) {
+        void ("simple" in (queryOptions as object));
+      }
+      return Promise.reject(new TypeError("q.args.forEach is not a function"));
     } else {
       parameters = firstArg;
     }
@@ -86,9 +90,18 @@ function createFakePostgresJs(): FakePostgresJs {
         return recordUnsafe(scope, query, ...rest);
       },
       savepoint(...args: unknown[]) {
-        const hasName = typeof args[0] === "string";
-        const name = hasName ? (args[0] as string) : undefined;
-        const cb = (hasName ? args[1] : args[0]) as (sp: PostgresJsTransactionLike) => unknown;
+        const first = args[0];
+        const rawArr =
+          (typeof first === "object" || typeof first === "function") && first !== null
+            ? (first as { raw?: unknown }).raw
+            : undefined;
+        if (Array.isArray(rawArr)) {
+          templateCalls.push(`savepoint:${rawArr.join("?")}`);
+          return Promise.resolve(args.slice(1));
+        }
+        const isOneArg = args.length === 1;
+        const name = isOneArg ? undefined : (first as string | undefined);
+        const cb = (isOneArg ? first : args[1]) as (sp: PostgresJsTransactionLike) => unknown;
         savepointNames.push(name);
         return Promise.resolve(cb(makeTx("savepoint")));
       },
@@ -100,6 +113,14 @@ function createFakePostgresJs(): FakePostgresJs {
     templateCalls.push(`${strings.join("?")}:${values.join(",")}`);
     return Promise.resolve("template-ok");
   }) as FakePostgresJs;
+
+  const invokeBegin = (...args: unknown[]): Promise<unknown> => {
+    const hasCbSecond = typeof args[1] === "function";
+    const opts = hasCbSecond ? (args[0] as string) : undefined;
+    const cb = (hasCbSecond ? args[1] : args[0]) as (tx: PostgresJsTransactionLike) => unknown;
+    beginOptions.push(opts);
+    return Promise.resolve(cb(makeTx("tx")));
+  };
 
   const makeReserved = (): FakeReservedPostgresJs => {
     const reserved = ((strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -114,13 +135,7 @@ function createFakePostgresJs(): FakePostgresJs {
       release() {
         fn.releaseCount += 1;
       },
-      begin(...args: unknown[]) {
-        const hasOpts = typeof args[0] === "string";
-        const opts = hasOpts ? (args[0] as string) : undefined;
-        const cb = (hasOpts ? args[1] : args[0]) as (tx: PostgresJsTransactionLike) => unknown;
-        beginOptions.push(opts);
-        return Promise.resolve(cb(makeTx("tx")));
-      },
+      begin: invokeBegin,
     });
     return reserved;
   };
@@ -135,13 +150,7 @@ function createFakePostgresJs(): FakePostgresJs {
     unsafe(query: string, ...rest: unknown[]) {
       return recordUnsafe("root", query, ...rest);
     },
-    begin(...args: unknown[]) {
-      const hasOpts = typeof args[0] === "string";
-      const opts = hasOpts ? (args[0] as string) : undefined;
-      const cb = (hasOpts ? args[1] : args[0]) as (tx: PostgresJsTransactionLike) => unknown;
-      beginOptions.push(opts);
-      return Promise.resolve(cb(makeTx("tx")));
-    },
+    begin: invokeBegin,
     reserve() {
       if (fn.failNextReserve !== null) {
         const err = fn.failNextReserve;
@@ -328,26 +337,191 @@ describe("wrapPostgresJs()", () => {
       expect(() => rawUnsafeAny("SELECT 1", null)).toThrow(TypeError);
       expect(() => rawUnsafeAny("SELECT 1", [], null)).toThrow(TypeError);
     });
-    // 3-arg (query, optionsObj, undefined) outside a scope matches postgres.js arity failure.
-    expect(() => rawUnsafeAny("SELECT 1", { prepare: true }, undefined)).toThrow(TypeError);
+
+    // 3-arg (query, optionsObj, undefined) preserves arity failure across untagged, scoped, and pre-tagged paths.
+    const preTaggedArity = tagSql("UPDATE invoice SET status = 'x'", {
+      actor: { type: "service", id: "arity_svc" },
+    });
+    await expect(
+      rawUnsafeAny("SELECT 1", { prepare: true }, undefined) as Promise<unknown>,
+    ).rejects.toThrow(TypeError);
+    await audit.as({ type: "user", id: "usr_arity" }, async () => {
+      await expect(
+        rawUnsafeAny(
+          "UPDATE invoice SET status = 'x'",
+          { prepare: true },
+          undefined,
+        ) as Promise<unknown>,
+      ).rejects.toThrow(TypeError);
+    });
+    await expect(
+      rawUnsafeAny(preTaggedArity, { prepare: true }, undefined) as Promise<unknown>,
+    ).rejects.toThrow(TypeError);
+
+    // Non-string queries pass through to postgres.js without crashing inside isTagged().
+    await rawUnsafeAny(null);
+    await rawUnsafeAny(undefined);
+    await rawUnsafeAny(Symbol("s"));
   });
 
-  it("handles synchronous reserve() returns and defensive non-object client guards", async () => {
+  it("wraps begin/savepoint with trailing undefined args, skips template savepoints, and handles thenable reserve()", async () => {
+    const raw = createFakePostgresJs();
+    const sql = wrapPostgresJs(raw);
+    const markerFn = () => "not-a-callback";
+
+    await audit.as({ type: "user", id: "usr_trailing" }, async () => {
+      await (
+        sql.begin as (
+          cb: (tx: FakePostgresJsTx) => Promise<void>,
+          extra?: undefined,
+        ) => Promise<void>
+      )(async (tx) => {
+        await tx.unsafe("UPDATE invoice SET status = $1", ["b1"], { prepare: true });
+        await (
+          tx.savepoint as (
+            name: string,
+            cb: (sp: FakePostgresJsTx) => Promise<void>,
+            extra?: undefined,
+          ) => Promise<void>
+        )(
+          "sp_trailing",
+          async (sp) => {
+            await sp.unsafe("UPDATE invoice SET status = $1", ["sp1"], { prepare: true });
+          },
+          undefined,
+        );
+        // Tagged-template savepoint whose interpolated value is a function must not wrap that function.
+        const interpolated = await (tx.savepoint as (
+          strings: TemplateStringsArray,
+          ...vals: unknown[]
+        ) => Promise<unknown[]>)`SELECT ${markerFn}`;
+        expect(interpolated).toEqual([markerFn]);
+
+        // Synthetic template object `{ raw: [...] }` matches postgres.js `Array.isArray(name.raw)`.
+        const synthetic = await (
+          tx.savepoint as (strings: { raw: string[] }, val: unknown) => Promise<unknown[]>
+        )({ raw: ["SELECT ", ""] }, markerFn);
+        expect(synthetic).toEqual([markerFn]);
+      }, undefined);
+
+      await (
+        sql.begin as (
+          opts: string,
+          cb: (tx: FakePostgresJsTx) => Promise<void>,
+          extra?: undefined,
+        ) => Promise<void>
+      )(
+        "read write",
+        async (tx) => {
+          await tx.unsafe("UPDATE invoice SET status = $1", ["b2"], { prepare: true });
+        },
+        undefined,
+      );
+    });
+
+    expect(raw.calls).toHaveLength(3);
+    for (const call of raw.calls) {
+      expect(decodeScope(call.query).actor).toEqual({ type: "user", id: "usr_trailing" });
+      expect(call.queryOptions).toEqual({ prepare: false });
+    }
+
+    // Non-chainable (void-returning) custom PromiseLike thenable returned by reserve():
+    // wraps the resolved client and propagates rejections cleanly.
+    const reservedTarget = await raw.reserve();
+    const thenableSql = {
+      unsafe: raw.unsafe.bind(raw),
+      begin: raw.begin.bind(raw),
+      reserve: () => ({
+        // biome-ignore lint/suspicious/noThenProperty: intentionally testing non-chainable custom thenable
+        then(onFulfilled: (r: FakeReservedPostgresJs) => void) {
+          queueMicrotask(() => onFulfilled(reservedTarget));
+        },
+      }),
+    };
+    const wrappedThenable = wrapPostgresJs(thenableSql);
+    const wrappedRes = await (
+      wrappedThenable.reserve as unknown as () => Promise<FakeReservedPostgresJs>
+    )();
+    await audit.as({ type: "user", id: "usr_thenable" }, async () => {
+      await wrappedRes.unsafe("UPDATE invoice SET status = 'th'", { prepare: true });
+    });
+    expect(decodeScope(raw.calls.at(-1)?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_thenable",
+    });
+
+    const rejectingReserveSql = {
+      unsafe: raw.unsafe.bind(raw),
+      begin: raw.begin.bind(raw),
+      reserve: () => ({
+        // biome-ignore lint/suspicious/noThenProperty: intentionally testing rejecting PromiseLike thenable
+        then(_onFulfilled: unknown, onRejected: (err: Error) => void) {
+          queueMicrotask(() => onRejected(new Error("thenable reserve failed")));
+        },
+      }),
+    };
+    const wrappedRejectingReserve = wrapPostgresJs(rejectingReserveSql);
+    await expect((wrappedRejectingReserve.reserve as () => Promise<unknown>)()).rejects.toThrow(
+      "thenable reserve failed",
+    );
+
+    // Nested thenable assimilation (thenable resolving to Promise.resolve(reserved)) wraps the inner reserved client.
+    const nestedReserveSql = {
+      unsafe: raw.unsafe.bind(raw),
+      begin: raw.begin.bind(raw),
+      reserve: () => ({
+        // biome-ignore lint/suspicious/noThenProperty: intentionally testing nested thenable assimilation
+        then(onFulfilled: (r: Promise<FakeReservedPostgresJs>) => void) {
+          onFulfilled(Promise.resolve(reservedTarget));
+        },
+      }),
+    };
+    const wrappedNestedReserve = wrapPostgresJs(nestedReserveSql);
+    const nestedRes = await (
+      wrappedNestedReserve.reserve as unknown as () => Promise<FakeReservedPostgresJs>
+    )();
+    await audit.as({ type: "user", id: "usr_nested_res" }, async () => {
+      await nestedRes.unsafe("UPDATE invoice SET status = 'nested_res'", { prepare: true });
+    });
+    expect(decodeScope(raw.calls.at(-1)?.query ?? "").actor).toEqual({
+      type: "user",
+      id: "usr_nested_res",
+    });
+    expect(raw.calls.at(-1)?.queryOptions).toEqual({ prepare: false });
+
+    // Single-read getter on reserve/begin/savepoint prevents TOCTOU and extra getter evaluation.
+    let reserveReads = 0;
+    const toctouClient = {
+      unsafe: raw.unsafe.bind(raw),
+      begin: raw.begin.bind(raw),
+      get reserve(): (() => Promise<FakeReservedPostgresJs>) | undefined {
+        reserveReads += 1;
+        return reserveReads === 1 ? undefined : raw.reserve.bind(raw);
+      },
+    };
+    const wrappedToctou = wrapPostgresJs(toctouClient);
+    expect(wrappedToctou.reserve).toBeUndefined();
+    expect(reserveReads).toBe(1);
+  });
+
+  it("handles synchronous reserve() returns, exactOptionalPropertyTypes clients, and defensive non-object guards", async () => {
     const raw = createFakePostgresJs();
     const reservedSync = await raw.reserve();
-    const syncSql = Object.assign(
-      {
-        unsafe: raw.unsafe.bind(raw),
-        begin: raw.begin.bind(raw),
-        reserve: () => reservedSync,
-      },
-      { extra: "ok" },
-    );
+    const syncSql: {
+      unsafe: FakePostgresJs["unsafe"];
+      begin: FakePostgresJs["begin"];
+      reserve?: (() => FakeReservedPostgresJs) | undefined;
+    } = {
+      unsafe: raw.unsafe.bind(raw),
+      begin: raw.begin.bind(raw),
+      reserve: () => reservedSync,
+    };
     const wrapped = wrapPostgresJs(syncSql);
-    const res = (wrapped.reserve as () => FakeReservedPostgresJs)();
+    const res = wrapped.reserve?.();
+    expect(res).toBeDefined();
 
     await audit.as({ type: "user", id: "usr_sync_res" }, async () => {
-      await res.unsafe("UPDATE invoice SET status = 'sync'", { prepare: true });
+      await res?.unsafe("UPDATE invoice SET status = 'sync'", { prepare: true });
     });
 
     expect(raw.calls).toHaveLength(1);

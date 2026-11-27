@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type AuditScope, audit, isTagged, tagSql } from "@auditstream/node";
 
 /** Subpath identifier exported by `@auditstream/drizzle/pg`. */
@@ -58,26 +59,12 @@ function isSubmittable(value: unknown): value is PgSubmittable {
   );
 }
 
-function readQueryConfigText(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) {
-    return undefined;
-  }
-  const text = (value as { text?: unknown }).text;
-  return typeof text === "string" ? text : undefined;
-}
-
-function defineOwnDataProperty(
-  target: PgQueryConfig,
-  key: string,
-  value: unknown,
-  enumerable: boolean,
-): void {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable,
-    writable: true,
-    configurable: true,
-  });
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
 }
 
 function cloneQueryConfig(
@@ -86,18 +73,27 @@ function cloneQueryConfig(
   dropName: boolean,
 ): PgQueryConfig {
   const proto: object | null = Object.getPrototypeOf(config);
-  const copy = Object.create(proto) as PgQueryConfig;
-  for (const key of Object.keys(config)) {
-    if (key === "text" || (dropName && key === "name")) {
-      continue;
-    }
-    defineOwnDataProperty(copy, key, config[key], true);
-  }
-  defineOwnDataProperty(copy, "text", nextText, true);
+  const descriptors = Object.getOwnPropertyDescriptors(config);
   if (dropName) {
-    // Shadow `name` as an own undefined property so neither own nor inherited `name`
-    // values cause node-postgres / Neon to cache per-actor prepared statements.
-    defineOwnDataProperty(copy, "name", undefined, false);
+    // Dropping `name` prevents node-postgres / Neon from caching a distinct server-side
+    // named prepared statement per actor comment.
+    delete descriptors.name;
+  }
+  descriptors.text = {
+    value: nextText,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  };
+  const copy = Object.defineProperties(Object.create(proto), descriptors) as PgQueryConfig;
+  if (dropName && "name" in copy) {
+    // Shadow prototype-inherited `name` so pg / Neon never caches a named prepared statement.
+    Object.defineProperty(copy, "name", {
+      value: undefined,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
   }
   return copy;
 }
@@ -116,6 +112,33 @@ function buildTaggedConfig(
   return cloneQueryConfig(config, tagSql(text, scope), true);
 }
 
+function rewriteStringQueryArgs(
+  args: unknown[],
+  first: string,
+  scope: AuditScope | undefined,
+  markPoolDecision: boolean,
+): unknown[] {
+  const nextText = !isTagged(first) && scope !== undefined ? tagSql(first, scope) : first;
+  if (!markPoolDecision) {
+    return [nextText, ...args.slice(1)];
+  }
+
+  // Wrap string pool.query() calls in a marked config object so the pool-entry actor
+  // decision (including "no actor") is final even if pg-pool queues the query and later
+  // dispatches client.query() inside another request's AsyncLocalStorage context.
+  const [, second, ...rest] = args;
+  const isCallback = typeof second === "function";
+  const marked: PgQueryConfig =
+    !isCallback && second !== undefined
+      ? { text: nextText, values: second as unknown[] }
+      : { text: nextText };
+  decidedPoolConfigs.add(marked);
+  if (isCallback) {
+    return [marked, second, ...rest];
+  }
+  return rest.length > 0 ? [marked, undefined, ...rest] : [marked];
+}
+
 function rewriteQueryArgs(
   args: unknown[],
   scope: AuditScope | undefined,
@@ -125,47 +148,39 @@ function rewriteQueryArgs(
     return args;
   }
 
-  const [first, second, ...rest] = args;
+  const [first] = args;
 
-  // Submittables (pg-cursor, pg-query-stream, etc.) and invalid function first-args pass through untouched.
+  // Submittables (pg-cursor, pg-query-stream, etc.) and functions pass through untouched.
   if (isSubmittable(first) || typeof first === "function") {
     return args;
   }
 
   if (typeof first === "string") {
-    const nextText = scope !== undefined ? tagSql(first, scope) : first;
-    if (!markPoolDecision) {
-      return [nextText, ...args.slice(1)];
-    }
-
-    // Wrap string pool.query() calls in a marked config object so the pool-entry actor
-    // decision (including "no actor") is final even if pg-pool queues the query and later
-    // dispatches client.query() inside another request's AsyncLocalStorage context.
-    if (typeof second === "function") {
-      const marked: PgQueryConfig = { text: nextText };
-      decidedPoolConfigs.add(marked);
-      return [marked, second, ...rest];
-    }
-    if (second !== undefined) {
-      const marked: PgQueryConfig = { text: nextText, values: second as unknown[] };
-      decidedPoolConfigs.add(marked);
-      return [marked, ...rest];
-    }
-    const marked: PgQueryConfig = { text: nextText };
-    decidedPoolConfigs.add(marked);
-    return [marked];
+    return rewriteStringQueryArgs(args, first, scope, markPoolDecision);
   }
 
-  const configText = readQueryConfigText(first);
-  if (configText !== undefined) {
-    const nextConfig = buildTaggedConfig(first as PgQueryConfig, configText, scope);
-    if (markPoolDecision) {
-      decidedPoolConfigs.add(nextConfig);
+  if (typeof first === "object" && first !== null) {
+    const rawText: unknown = (first as { text?: unknown }).text;
+    if (typeof rawText === "string") {
+      const nextConfig = buildTaggedConfig(first as PgQueryConfig, rawText, scope);
+      if (markPoolDecision) {
+        decidedPoolConfigs.add(nextConfig);
+      }
+      return [nextConfig, ...args.slice(1)];
     }
-    return [nextConfig, ...args.slice(1)];
   }
 
   return args;
+}
+
+function findConnectCallbackIndex(args: readonly unknown[]): number {
+  if (typeof args[0] === "function") {
+    return 0;
+  }
+  if (args.length > 1 && typeof args.at(-1) === "function") {
+    return args.length - 1;
+  }
+  return -1;
 }
 
 function patchClient(client: unknown): void {
@@ -181,14 +196,40 @@ function patchClient(client: unknown): void {
   const originalQuery = target.query;
   target.query = function patchedClientQuery(this: unknown, ...args: unknown[]): unknown {
     const first = args[0];
-    // Respect decisions already finalized at pool.query() entry (tagged OR explicitly untagged).
-    if (typeof first === "object" && first !== null && decidedPoolConfigs.has(first)) {
+    // Respect one-shot decisions already finalized at pool.query() entry (tagged OR untagged),
+    // consuming the entry so reusing a config on client.query() later cannot bypass tagging.
+    if (typeof first === "object" && first !== null && decidedPoolConfigs.delete(first)) {
       return originalQuery.apply(this, args);
     }
 
     const nextArgs = rewriteQueryArgs(args, audit.current(), false);
     return originalQuery.apply(this, nextArgs);
   };
+}
+
+function wrapPoolConnectCallback(
+  userCallback: (err: unknown, client: unknown, done: unknown) => void,
+): (err: unknown, client: unknown, done: unknown) => void {
+  // Capture the caller's AsyncLocalStorage context at pool.connect(cb) entry so queued
+  // callbacks resumed inside another request's client.release() never inherit that actor.
+  const runInCallerContext = AsyncLocalStorage.snapshot();
+  return (err: unknown, client: unknown, done: unknown): void => {
+    if (!err && client) {
+      patchClient(client);
+    }
+    runInCallerContext(userCallback, err, client, done);
+  };
+}
+
+function wrapConnectResult(result: unknown): unknown {
+  if (!isThenable(result)) {
+    patchClient(result);
+    return result;
+  }
+  return Promise.resolve(result).then((client) => {
+    patchClient(client);
+    return client;
+  });
 }
 
 /**
@@ -200,13 +241,15 @@ function patchClient(client: unknown): void {
  * - **Idempotent:** returns the same `pool` instance; calling `wrapPgPool()` twice is a no-op.
  * - **Concurrency-safe under pool queuing:** reads `audit.current()` synchronously at
  *   `pool.query()` entry and marks the resulting config so queued callbacks resumed inside
- *   another request's async context never overwrite or add an actor (including actor-less calls).
- * - **Interactive transactions:** patches checked-out clients (`pool.on("connect")` and
- *   `pool.connect()`) so statements inside `db.transaction()` and savepoints read `audit.current()`
- *   from the caller's own async flow.
+ *   another request's async context never overwrite or add an actor (including actor-less calls);
+ *   callback-style `pool.connect(cb)` snapshots and restores the caller's `AsyncLocalStorage`
+ *   context when the queued callback fires.
+ * - **Interactive transactions:** patches checked-out clients (`pool.prependListener("connect")`
+ *   with `pool.on("connect")` fallback, plus `pool.connect()`) so statements inside
+ *   `db.transaction()` and savepoints read `audit.current()` from the caller's own async flow.
  * - **No named prepared statement leaks:** whenever a query config carries an Auditstream tag
  *   (added here or already tagged, for example by Drizzle 1.x `.comment()`), its `name` property
- *   is omitted on a shallow copy so PostgreSQL never caches per-actor prepared statements.
+ *   is removed on a shallow copy so PostgreSQL never caches per-actor prepared statements.
  * - **At most one tag:** statements already tagged (for example by Drizzle 1.x `.comment()`) are
  *   not double-tagged.
  * - **Submittables untouched:** submittable objects with a `.submit()` method (such as `pg-cursor`
@@ -222,6 +265,7 @@ export function wrapPgPool<TPool extends PgPoolLike>(pool: TPool): TPool {
     query: (...args: unknown[]) => unknown;
     connect?: (...args: unknown[]) => unknown;
     on: (event: "connect", listener: (client: unknown) => void) => unknown;
+    prependListener?: (event: "connect", listener: (client: unknown) => void) => unknown;
   };
 
   const originalPoolQuery = mutablePool.query.bind(pool);
@@ -230,32 +274,27 @@ export function wrapPgPool<TPool extends PgPoolLike>(pool: TPool): TPool {
     return originalPoolQuery(...nextArgs);
   };
 
-  mutablePool.on("connect", (client: unknown) => {
-    patchClient(client);
-  });
+  if (typeof mutablePool.prependListener === "function") {
+    mutablePool.prependListener("connect", patchClient);
+  } else {
+    mutablePool.on("connect", patchClient);
+  }
 
   if (typeof mutablePool.connect === "function") {
     const originalConnect = mutablePool.connect.bind(pool);
     mutablePool.connect = function patchedPoolConnect(...args: unknown[]): unknown {
-      const last = args.at(-1);
-      if (typeof last === "function") {
-        const userCallback = last as (err: unknown, client: unknown, done: unknown) => void;
-        const wrappedCallback = (err: unknown, client: unknown, done: unknown): void => {
-          if (!err && client) {
-            patchClient(client);
-          }
-          userCallback(err, client, done);
-        };
-        return originalConnect(...args.slice(0, -1), wrappedCallback);
+      const cbIndex = findConnectCallbackIndex(args);
+      if (cbIndex >= 0) {
+        const userCallback = args[cbIndex] as (
+          err: unknown,
+          client: unknown,
+          done: unknown,
+        ) => void;
+        const nextArgs = [...args];
+        nextArgs[cbIndex] = wrapPoolConnectCallback(userCallback);
+        return wrapConnectResult(originalConnect(...nextArgs));
       }
-      const result = originalConnect(...args);
-      if (result && typeof (result as PromiseLike<unknown>).then === "function") {
-        return (result as Promise<unknown>).then((client) => {
-          patchClient(client);
-          return client;
-        });
-      }
-      return result;
+      return wrapConnectResult(originalConnect(...args));
     };
   }
 
