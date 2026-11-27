@@ -12,20 +12,22 @@ Local quality gates (workspace added in JA1, CI checks in JA2):
 ```sh
 pnpm install --frozen-lockfile                            # install workspace dependencies
 pnpm check                                                # biome ci, typecheck, build and tests via Turborepo
+pnpm test:workers                                         # Cloudflare Workers (workerd) runtime smoke test
 pnpm --filter @auditstream/test-utils test:integration    # Postgres + PgBouncer harness test
 pnpm changeset                                            # add a changeset (required for package changes)
 ```
 
-Toolchain: Node 26 for development (`.nvmrc`); published packages support Node `>=22.12`. pnpm 12 with catalogs, Turborepo 2.11, tsdown 0.23 (exact), Biome 2.6, TypeScript `~6.0`, Vitest 5.
+Toolchain: Node 26 for development (`.nvmrc`); published packages support Node `>=22.12`. pnpm 12 with catalogs, Turborepo 2.11, tsdown 0.23 (exact), Biome 2.6, TypeScript `~6.0`, Vitest 5, workerd (exact, catalog-pinned for Workers smoke tests).
 
 ## Repository map
 
 ```text
-package.json                root workspace scripts (`pnpm check`)
+package.json                root workspace scripts (`pnpm check`, `pnpm test:workers`)
 pnpm-workspace.yaml         workspaces (`packages/*`, `examples/*`) and dependency catalog
 turbo.json                  Turborepo task graph
 biome.json                  Biome formatting and lint rules
 tsconfig.base.json          strict TS 6.0 config (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `isolatedDeclarations`)
+scripts/                    workspace verification and runtime smoke runners (`smoke-runtimes.mjs`, `smoke-workers.mjs`, `check-packages.mjs`)
 packages/
   node/                     @auditstream/node: AsyncLocalStorage context, audit.as(), audit.log(), /express, /hono, /next, /pg, /postgres-js, /neon-http
   prisma/                   @auditstream/prisma: Prisma 7.1+ SQL comments plugin and set_config fallback

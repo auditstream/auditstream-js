@@ -28,6 +28,13 @@
       "matchUpdateTypes": ["minor", "patch"],
       "groupName": "pnpm non-major dependencies",
       "groupSlug": "pnpm-minor-patch"
+    },
+    {
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["workerd"],
+      "schedule": ["* 0-5 1 * *"],
+      "groupName": "workerd",
+      "groupSlug": "workerd"
     }
   ]
 }

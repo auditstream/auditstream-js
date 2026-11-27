@@ -87,7 +87,7 @@ curl -s -X POST http://127.0.0.1:3000/invoices \
 
 ## Run the smoke test
 
-The smoke test starts Postgres with `@auditstream/test-utils`, applies migrations, and sends 40 concurrent requests:
+The smoke test starts PostgreSQL with `@auditstream/test-utils`, applies migrations, and sends 40 concurrent requests:
 
 ```bash
 pnpm --filter ./examples/hono-drizzle test:smoke
@@ -96,7 +96,8 @@ pnpm --filter ./examples/hono-drizzle test:smoke
 ## Cloudflare Workers note
 
 The same `@auditstream/node/hono` middleware runs on Cloudflare Workers.
-Enable the `nodejs_als` compatibility flag, or set a compatibility date of `2026-08-04` or later.
+CI verifies `@auditstream/node` (core APIs, `/hono`, `/next`, `/pg`, `/neon-http`, and `/postgres-js`) in workerd via `pnpm test:workers` using an in-memory fixture (`packages/node/smoke/workers/worker.mjs`); Drizzle and this Node.js example app are not yet tested on Workers.
+For Auditstream's actor scope and SQL tagging layer, enable the `nodejs_als` compatibility flag, or set a compatibility date of `2026-08-04` or later (note that real TCP `pg.Pool` connections on Workers additionally require `nodejs_compat` — enabled by default from `2026-08-04` — including when connecting via Hyperdrive, whereas `@auditstream/node/neon-http` works over HTTP with `nodejs_als` alone).
 
 ## Inspect captured changes
 

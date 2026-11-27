@@ -15,6 +15,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "test:smoke": "turbo run test:smoke",
+    "test:workers": "turbo run build --filter=@auditstream/node && node scripts/smoke-workers.mjs",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm build && pnpm -r --filter '!@auditstream/test-utils' publish --access public --no-git-checks"
@@ -30,6 +31,7 @@
     "tsdown": "catalog:",
     "turbo": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "workerd": "catalog:"
   }
 }
