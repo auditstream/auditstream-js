@@ -25,7 +25,7 @@ pnpm add postgres
 pnpm add @neondatabase/serverless
 ```
 
-> **Prerequisite:** Run `auditstream init` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/) to create the audit schema and database capture triggers.
+> **Prerequisite:** Generate the capture migration with `auditstream init --migrations drizzle` from the [`auditstream` CLI](https://auditstream.dev/docs/getting-started/), then apply it on a direct (non-pooled) PostgreSQL connection with your Drizzle migration workflow. `auditstream init` only writes migration files; run `auditstream verify` to confirm the audit schema and capture triggers are installed.
 
 ## Quick start
 
