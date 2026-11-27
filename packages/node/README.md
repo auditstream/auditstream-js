@@ -134,9 +134,9 @@ interface AuthedRequest extends Request {
 const app = express();
 // Mount after authentication middleware populates `req.user` from a verified session or JWT.
 app.use(
-  auditstream({
+  auditstream<AuthedRequest>({
     actor: (req) => {
-      const user = (req as AuthedRequest).user;
+      const user = req.user;
       return user ? { type: "user", id: user.id, ...(user.tenantId ? { tenant: user.tenantId } : {}) } : undefined;
     },
     context: (req) => {
@@ -149,7 +149,7 @@ app.use(
 );
 ```
 
-Always validate and bound client-supplied headers such as `x-request-id` (and opt-in `userAgent`) before placing them in `context`, so oversized or malformed headers cannot exceed the 512-byte serialized actor+context payload limit (`PAYLOAD_TOO_LARGE`).
+Always validate and bound client-supplied headers such as `x-request-id` (and opt-in `userAgent`) before placing them in `context`, so oversized or malformed headers cannot exceed the 512-byte serialized actor+context payload limit (`PAYLOAD_TOO_LARGE`). If your auth middleware stores identity on `res.locals` instead of `req.user`, pass a second type parameter (`auditstream<Request, AuthLocals>({ actor: (_req, res) => ... })`).
 
 #### Hono (`@auditstream/node/hono`)
 
@@ -166,6 +166,27 @@ app.use(
     actor: async (c) => {
       const s = await verifySession(c.req.header("authorization"));
       return s ? { type: "user", id: s.id, ...(s.tenantId ? { tenant: s.tenantId } : {}) } : undefined;
+    },
+  }),
+);
+```
+
+For typed `Hono<AppEnv>` apps, pass your `Env` type argument (`auditstream<AppEnv>({ ... })`) or wrap with `createFactory<AppEnv>().createMiddleware(...)` so `c.get(...)`, `c.var`, and `c.env` stay strongly typed without assertions:
+
+```ts
+import { auditstream } from "@auditstream/node/hono";
+import { Hono } from "hono";
+import type { JwtVariables } from "hono/jwt";
+
+type AppEnv = { Variables: JwtVariables<{ sub?: unknown } | undefined> };
+const app = new Hono<AppEnv>();
+app.use(
+  "/api/*",
+  auditstream<AppEnv>({
+    actor: (c) => {
+      const rawSub = c.get("jwtPayload")?.sub;
+      const sub = typeof rawSub === "string" ? rawSub.trim() : "";
+      return sub.length > 0 ? { type: "user", id: sub } : undefined;
     },
   }),
 );

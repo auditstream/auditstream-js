@@ -5,6 +5,7 @@
 ```ts
 
 import { Context } from 'hono';
+import { Env } from 'hono';
 import { MiddlewareHandler } from 'hono';
 
 // @public
@@ -27,12 +28,12 @@ export interface AuditContext {
 }
 
 // @public
-export function auditstream(options: HonoAuditOptions): MiddlewareHandler;
+export function auditstream<E extends Env = any>(options: HonoAuditOptions<E>): MiddlewareHandler<E>;
 
 // @public
-export interface HonoAuditOptions {
-    readonly actor: (c: Context) => Actor | undefined | PromiseLike<Actor | undefined>;
-    readonly context?: (c: Context) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+export interface HonoAuditOptions<E extends Env = any> {
+    readonly actor: (c: Context<E>) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (c: Context<E>) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
 }
 
 // @public
