@@ -201,7 +201,7 @@ export const approveInvoice = auditAction(async (invoiceId: number) => invoiceId
 | PostgreSQL | `15` to `19` |
 | Prisma | `@prisma/client` `7.1` or newer within `7.x` (via `@auditstream/prisma`) |
 | Drizzle | `0.45` and `1.x` (via `@auditstream/drizzle`) |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (tested in CI with workerd; needs the `nodejs_als` flag or compatibility date `2026-08-04` or later) |
 
 `@auditstream/node` is ESM-only and uses `AsyncLocalStorage.run()` exclusively so all adapters share one scope.
 

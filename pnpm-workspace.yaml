@@ -17,6 +17,7 @@ allowBuilds:
   "prisma": false
   "protobufjs": false
   "ssh2": false
+  "workerd": false
 
 catalog:
   "@arethetypeswrong/cli": "^0.18.5"
@@ -54,3 +55,4 @@ catalog:
   "turbo": "^2.11.13"
   "typescript": "~6.0.3"
   "vitest": "^5.1.1"
+  "workerd": "1.20261125.1"

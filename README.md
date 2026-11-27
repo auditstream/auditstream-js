@@ -81,7 +81,7 @@ Runnable end-to-end apps with real engine-generated migrations and live PostgreS
 | PostgreSQL | `15` to `19` (only supported engine in v0.1; MySQL is under evaluation) |
 | Prisma | `@prisma/client` `7.1` or newer within `7.x` (Prisma 6 is unsupported; Prisma 8 follows its stable release; the `prisma` CLI is never a peer dependency) |
 | Drizzle | `0.45` and `1.x` |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`@auditstream/node` tested in CI with workerd; needs the `nodejs_als` flag or compatibility date `2026-08-04` or later) |
 
 ## Specification conformance
 

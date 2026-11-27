@@ -208,6 +208,8 @@ jobs:
         run: bun scripts/smoke-runtimes.mjs
       - name: Smoke test Deno
         run: deno run --allow-read --allow-env scripts/smoke-runtimes.mjs
+      - name: Smoke test Cloudflare Workers (workerd)
+        run: pnpm test:workers
 
   test-smoke:
     needs: changes

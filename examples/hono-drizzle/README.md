@@ -87,7 +87,7 @@ curl -s -X POST http://127.0.0.1:3000/invoices \
 
 ## Run the smoke test
 
-The smoke test starts Postgres with `@auditstream/test-utils`, applies migrations, and sends 40 concurrent requests:
+The smoke test starts PostgreSQL with `@auditstream/test-utils`, applies migrations, and sends 40 concurrent requests:
 
 ```bash
 pnpm --filter ./examples/hono-drizzle test:smoke
@@ -95,7 +95,7 @@ pnpm --filter ./examples/hono-drizzle test:smoke
 
 ## Cloudflare Workers note
 
-The same `@auditstream/node/hono` middleware runs on Cloudflare Workers.
+The same `@auditstream/node/hono` middleware runs on Cloudflare Workers. CI runs it in workerd (`pnpm test:workers`) with the `@auditstream/node/pg` wrapper over an in-memory pool, under both settings below.
 Enable the `nodejs_als` compatibility flag, or set a compatibility date of `2026-08-04` or later.
 
 ## Inspect captured changes
