@@ -27,12 +27,12 @@ export interface AuditContext {
 }
 
 // @public
-export function auditstream(options: ExpressAuditOptions): RequestHandler;
+export function auditstream<TRequest extends Request_2 = Request_2>(options: ExpressAuditOptions<TRequest>): RequestHandler;
 
 // @public
-export interface ExpressAuditOptions {
-    readonly actor: (req: Request_2) => Actor | undefined | PromiseLike<Actor | undefined>;
-    readonly context?: (req: Request_2) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+export interface ExpressAuditOptions<TRequest extends Request_2 = Request_2> {
+    readonly actor: (req: TRequest) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (req: TRequest) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
 }
 
 // @public

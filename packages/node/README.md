@@ -134,9 +134,9 @@ interface AuthedRequest extends Request {
 const app = express();
 // Mount after authentication middleware populates `req.user` from a verified session or JWT.
 app.use(
-  auditstream({
+  auditstream<AuthedRequest>({
     actor: (req) => {
-      const user = (req as AuthedRequest).user;
+      const user = req.user;
       return user ? { type: "user", id: user.id, ...(user.tenantId ? { tenant: user.tenantId } : {}) } : undefined;
     },
     context: (req) => {

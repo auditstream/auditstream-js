@@ -1,6 +1,6 @@
 import type { AddressInfo } from "node:net";
-import express, { type ErrorRequestHandler, type Express } from "express";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import express, { type ErrorRequestHandler, type Express, type Request } from "express";
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { auditstream } from "../src/express.js";
 import { type Actor, AuditstreamError, audit } from "../src/index.js";
 
@@ -223,6 +223,121 @@ describe("@auditstream/node/express", () => {
       expect((receivedErrors[1] as Error).message).toBe("async resolver boom");
       expect(receivedErrors[2]).toBeInstanceOf(AuditstreamError);
       expect((receivedErrors[2] as AuditstreamError).code).toBe("INVALID_ACTOR");
+    } finally {
+      await started.close();
+    }
+  });
+
+  it("supports typed Express Request generics via explicit type arg, parameter annotation, and narrowed params", async () => {
+    interface AuthedRequest extends Request {
+      user?: { id: string; tenantId?: string };
+      traceTag?: string;
+    }
+
+    type OrgRequest = Request<{ orgId: string }> & {
+      user?: { id: string };
+    };
+
+    const app = express();
+
+    // Upstream auth middleware populates typed properties on `req`.
+    app.use("/api", (req, _res, next) => {
+      const authed = req as AuthedRequest;
+      const userId = req.header("x-user-id");
+      const tenantId = req.header("x-tenant-id");
+      if (userId) {
+        authed.user = tenantId ? { id: userId, tenantId } : { id: userId };
+      }
+      const traceTag = req.header("x-trace-tag");
+      if (traceTag) {
+        authed.traceTag = traceTag;
+      }
+      next();
+    });
+
+    // 1. Explicit generic `auditstream<AuthedRequest>({ ... })` with zero casts in callbacks
+    app.use(
+      "/api/explicit",
+      auditstream<AuthedRequest>({
+        actor: (req) => {
+          expectTypeOf(req.user).toEqualTypeOf<{ id: string; tenantId?: string } | undefined>();
+          if (!req.user) {
+            return undefined;
+          }
+          return req.user.tenantId
+            ? { type: "user", id: req.user.id, tenant: req.user.tenantId }
+            : { type: "user", id: req.user.id };
+        },
+        context: (req) => {
+          expectTypeOf(req.traceTag).toEqualTypeOf<string | undefined>();
+          return req.traceTag ? { requestId: req.traceTag, source: "express-explicit" } : undefined;
+        },
+      }),
+    );
+
+    // 2. Parameter-annotated inference propagates `AuthedRequest` into `context` automatically
+    app.use(
+      "/api/annotated",
+      auditstream({
+        actor: (req: AuthedRequest) => (req.user ? { type: "user", id: req.user.id } : undefined),
+        context: (req) => {
+          expectTypeOf(req.traceTag).toEqualTypeOf<string | undefined>();
+          return req.traceTag
+            ? { requestId: req.traceTag, source: "express-annotated" }
+            : undefined;
+        },
+      }),
+    );
+
+    // 3. Narrowed route-params request subtype satisfies `TRequest extends Request`
+    const orgMiddleware = auditstream<OrgRequest>({
+      actor: (req) => {
+        expectTypeOf(req.params.orgId).toEqualTypeOf<string>();
+        return req.user ? { type: "user", id: req.user.id, tenant: req.params.orgId } : undefined;
+      },
+    });
+    app.get("/api/orgs/:orgId", orgMiddleware, (_req, res) => {
+      res.json({ scope: audit.current() ?? null });
+    });
+
+    app.get("/api/explicit", (_req, res) => {
+      res.json({ scope: audit.current() ?? null });
+    });
+    app.get("/api/annotated", (_req, res) => {
+      res.json({ scope: audit.current() ?? null });
+    });
+
+    const started = await startServer(app);
+    try {
+      const explicitRes = await fetch(`${started.url}/api/explicit`, {
+        headers: { "x-user-id": "usr_exp_1", "x-tenant-id": "org_1", "x-trace-tag": "req_exp_1" },
+      });
+      expect(explicitRes.status).toBe(200);
+      expect(await explicitRes.json()).toEqual({
+        scope: {
+          actor: { type: "user", id: "usr_exp_1", tenant: "org_1" },
+          context: { requestId: "req_exp_1", source: "express-explicit" },
+        },
+      });
+
+      const annotatedRes = await fetch(`${started.url}/api/annotated`, {
+        headers: { "x-user-id": "usr_exp_2", "x-trace-tag": "req_exp_2" },
+      });
+      expect(annotatedRes.status).toBe(200);
+      expect(await annotatedRes.json()).toEqual({
+        scope: {
+          actor: { type: "user", id: "usr_exp_2" },
+          context: { requestId: "req_exp_2", source: "express-annotated" },
+        },
+      });
+
+      const orgRes = await fetch(`${started.url}/api/orgs/org_77`, {
+        headers: { "x-user-id": "usr_exp_3" },
+      });
+      expect(orgRes.status).toBe(200);
+      expect(await orgRes.json()).toEqual({
+        scope: { actor: { type: "user", id: "usr_exp_3", tenant: "org_77" } },
+      });
     } finally {
       await started.close();
     }
