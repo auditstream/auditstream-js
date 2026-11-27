@@ -14,7 +14,7 @@ Thank you for contributing to the Auditstream TypeScript adapters. Our engineeri
 
 ## Local checks and adapter standards
 
-- Develop on Node 26 (`.nvmrc`) with pnpm 12 and run `pnpm check` before marking a PR ready; see [Engineering standards](https://github.com/auditstream/auditstream/blob/main/docs/handbook/engineering-standards.md).
+- Develop on Node 26 (`.nvmrc`) with pnpm 12 and run `pnpm check` and `pnpm test:workers` before marking a PR ready; see [Engineering standards](https://github.com/auditstream/auditstream/blob/main/docs/handbook/engineering-standards.md).
 - Follow every adapter rule (ESM-only, `@auditstream/node` as peer dependency, `AsyncLocalStorage.run()` only, no named prepared statements with per-actor comments, 40-request concurrency tests) in [Adapters (TypeScript)](https://github.com/auditstream/auditstream/blob/main/docs/handbook/adapters.md).
 
 ## AI usage policy

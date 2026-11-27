@@ -34,8 +34,9 @@ for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
   const smokeDir = join(packagesDir, entry.name, "smoke");
   if (!existsSync(smokeDir)) continue;
 
-  const files = readdirSync(smokeDir)
-    .filter((name) => name.endsWith(".mjs"))
+  const files = readdirSync(smokeDir, { withFileTypes: true })
+    .filter((fileEntry) => fileEntry.isFile() && fileEntry.name.endsWith(".mjs"))
+    .map((fileEntry) => fileEntry.name)
     .sort();
   for (const file of files) {
     const smokeUrl = pathToFileURL(join(smokeDir, file)).href;

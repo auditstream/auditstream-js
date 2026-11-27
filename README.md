@@ -81,7 +81,7 @@ Runnable end-to-end apps with real engine-generated migrations and live PostgreS
 | PostgreSQL | `15` to `19` (only supported engine in v0.1; MySQL is under evaluation) |
 | Prisma | `@prisma/client` `7.1` or newer within `7.x` (Prisma 6 is unsupported; Prisma 8 follows its stable release; the `prisma` CLI is never a peer dependency) |
 | Drizzle | `0.45` and `1.x` |
-| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`@auditstream/node` tested in CI with workerd; needs the `nodejs_als` flag or compatibility date `2026-08-04` or later) |
+| Runtimes | Node.js (reference), Bun and Deno (tested in CI), Cloudflare Workers (`@auditstream/node` tested in CI with workerd except `/express`; needs the `nodejs_als` flag or compatibility date `2026-08-04` or later) |
 
 ## Specification conformance
 
@@ -94,7 +94,8 @@ Requires Node.js 26 (for workspace tooling) and pnpm 12 (`corepack enable`):
 ```sh
 pnpm install --frozen-lockfile
 pnpm check               # Biome lint/format, typecheck, build, unit tests, API check, publint/attw, README snippets
-pnpm test:integration    # Live PostgreSQL + PgBouncer integration suite (requires Docker)
+pnpm test:workers        # Cloudflare Workers smoke suite in workerd (both documented compatibility configs)
+pnpm -r --if-present test:integration  # Live PostgreSQL + PgBouncer integration suite (requires Docker)
 ```
 
 ## Contributing and security
