@@ -88,6 +88,7 @@ Prisma 6 is not supported. Prisma 8 support follows its stable release. The `pri
 - **Next.js `proxy`:** `AsyncLocalStorage` does not cross Next.js `proxy`. Pass actor data through headers, cookies, rewrites, redirects, or URLs, and wrap handlers with `@auditstream/node/next`.
 - **Background jobs:** Code running outside a request has no active actor. Open a scope with a `service` or `system` actor.
 - **Prisma Accelerate:** Comment plugins do not receive the SQL under Accelerate. Use `auditTransaction()` there instead.
+- **Nested `audit.as()` inside `auditTransaction()`:** `auditTransaction()` captures the active actor once at transaction entry and sets transaction-local `set_config('auditstream.actor', $1, true)`. Because `set_config` takes precedence over SQL comments (`spec/transport.md`), nested `audit.as(innerActor, ...)` calls inside `fn(tx)` still attribute writes on `tx` to the outer actor; use a separate transaction (or explicitly update and restore `auditstream.actor` via `setConfigValue()` and `set_config(..., true)` on `tx`) when an inner step needs a different actor.
 - **AWS RDS Proxy:** Trailing comments are the default transport because `set_config(..., true)` pins RDS Proxy sessions.
 
 ## Links

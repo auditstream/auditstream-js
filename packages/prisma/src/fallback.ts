@@ -29,6 +29,13 @@ export interface PrismaTransactionRunner<TTx extends PrismaRawExecutor, TOptions
  *   (`is_local = true`), wins over any SQL comment on the same statement, and resets to an empty
  *   string once the transaction commits or rolls back so actors cannot leak across pooled
  *   connections.
+ * - **Nested `audit.as()` scopes:** `auditTransaction()` captures `audit.current()` once at
+ *   transaction entry and runs `set_config('auditstream.actor', $1, true)` once at transaction
+ *   start. Because `set_config` takes precedence over SQL comments (`spec/transport.md`), nested
+ *   `audit.as(innerActor, ...)` calls inside `fn(tx)` still attribute database writes on `tx` to
+ *   the outer transaction's actor. Run the inner work in a separate transaction (or explicitly
+ *   update and restore `auditstream.actor` via `setConfigValue()` and `set_config(..., true)` on
+ *   `tx`) if an inner step must be attributed to a different actor.
  * - **RDS Proxy note:** `set_config` pins connections on AWS RDS Proxy; keep the `auditstream()`
  *   SQL comments plugin as the default transport there.
  * - **Outside a scope:** When `audit.current()` is `undefined`, `auditTransaction()` runs `fn`

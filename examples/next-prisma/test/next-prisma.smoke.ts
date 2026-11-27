@@ -505,7 +505,16 @@ describe("examples/next-prisma smoke test", () => {
     expect(appOnly.items[0]?.action).toBe("invoice.exported");
     expect(appOnly.hasMore).toBe(false);
 
-    // Date window filter (future since -> empty page).
+    // Date window filter (recent ISO since -> returns org_acme rows; future since -> empty page; only until -> bounded 30-day lookback).
+    const recentSince = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const recentRes = await fetch(
+      `${baseUrl}/api/activity?since=${encodeURIComponent(recentSince)}`,
+      { headers: { "x-demo-tenant": "org_acme" } },
+    );
+    expect(recentRes.status).toBe(200);
+    const recentPage = (await recentRes.json()) as ActivityPageDto;
+    expect(recentPage.items).toHaveLength(3);
+
     const emptyRes = await fetch(`${baseUrl}/api/activity?since=2099-01-01`, {
       headers: { "x-demo-tenant": "org_acme" },
     });
@@ -514,6 +523,26 @@ describe("examples/next-prisma smoke test", () => {
     expect(emptyPage.items).toEqual([]);
     expect(emptyPage.hasMore).toBe(false);
     expect(emptyPage.nextCursor).toBeNull();
+
+    // Only `until=2099-01-01` applies the bounded 30-day lookback [2098-12-02, 2099-01-01)
+    // and prunes all current partitions instead of returning the 3 org_acme rows from today.
+    const onlyUntilRes = await fetch(`${baseUrl}/api/activity?until=2099-01-01`, {
+      headers: { "x-demo-tenant": "org_acme" },
+    });
+    expect(onlyUntilRes.status).toBe(200);
+    const onlyUntilPage = (await onlyUntilRes.json()) as ActivityPageDto;
+    expect(onlyUntilPage.items).toEqual([]);
+
+    // Oversized lookbacks / spans return HTTP 400 (INVALID_QUERY).
+    const unboundedSinceRes = await fetch(`${baseUrl}/api/activity?since=0001-01-01`, {
+      headers: { "x-demo-tenant": "org_acme" },
+    });
+    expect(unboundedSinceRes.status).toBe(400);
+    const oversizedSpanRes = await fetch(
+      `${baseUrl}/api/activity?since=2025-01-01&until=2026-11-01`,
+      { headers: { "x-demo-tenant": "org_acme" } },
+    );
+    expect(oversizedSpanRes.status).toBe(400);
 
     // Validation errors return HTTP 400.
     const badSourceRes = await fetch(`${baseUrl}/api/activity?source=invalid`);
@@ -530,5 +559,84 @@ describe("examples/next-prisma smoke test", () => {
     expect(feedHtml).toContain("Activity Feed");
     expect(feedHtml).toContain("Carol Diaz");
     expect(feedHtml).toContain("invoice.exported");
+
+    // Object.prototype actor IDs ("toString") serialize cleanly on both /api/activity and SSR /activity.
+    const protoWriteRes = await fetch(`${baseUrl}/api/invoices`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": "toString",
+        "x-demo-tenant": "org_proto",
+      },
+      body: JSON.stringify({ status: "proto-safe", total: "12.00" }),
+    });
+    expect(protoWriteRes.status).toBe(201);
+
+    const protoApiRes = await fetch(`${baseUrl}/api/activity`, {
+      headers: { "x-demo-tenant": "org_proto" },
+    });
+    expect(protoApiRes.status).toBe(200);
+    const protoPage = (await protoApiRes.json()) as ActivityPageDto;
+    expect(protoPage.items).toHaveLength(1);
+    expect(protoPage.items[0]?.actor).toEqual({
+      id: "toString",
+      type: "user",
+      displayName: "User toString",
+    });
+
+    const protoSsrRes = await fetch(`${baseUrl}/activity`, {
+      headers: { "x-demo-tenant": "org_proto" },
+    });
+    expect(protoSsrRes.status).toBe(200);
+    const protoHtml = await protoSsrRes.text();
+    expect(protoHtml).toContain("User toString");
+
+    // Oversized / JSON-expanding demo headers that would exceed audit.as()'s 512-byte cap
+    // are dropped cleanly as unscoped writes (actor_id = null, actor_source = null) instead of HTTP 500.
+    const oversizedStartId = await getLatestChangeId(admin);
+    const oversizedRawRes = await fetch(`${baseUrl}/api/invoices`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": "u".repeat(600),
+      },
+      body: JSON.stringify({ status: "oversized-raw", total: "5.00" }),
+    });
+    expect(oversizedRawRes.status).toBe(201);
+    const oversizedRawInvoice = (await oversizedRawRes.json()) as InvoiceResponse;
+
+    const oversizedEscapedRes = await fetch(`${baseUrl}/api/invoices`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-demo-user": '"'.repeat(128),
+        "x-demo-tenant": '"'.repeat(128),
+      },
+      body: JSON.stringify({ status: "oversized-escaped", total: "6.00" }),
+    });
+    expect(oversizedEscapedRes.status).toBe(201);
+    const oversizedEscapedInvoice = (await oversizedEscapedRes.json()) as InvoiceResponse;
+
+    const oversizedRows = await fetchChangesSince(admin, oversizedStartId);
+    expect(oversizedRows).toEqual([
+      {
+        table_name: "invoice",
+        op: "INSERT",
+        pk: oversizedRawInvoice.id,
+        status: "oversized-raw",
+        actor_id: null,
+        request_id: null,
+        actor_source: null,
+      },
+      {
+        table_name: "invoice",
+        op: "INSERT",
+        pk: oversizedEscapedInvoice.id,
+        status: "oversized-escaped",
+        actor_id: null,
+        request_id: null,
+        actor_source: null,
+      },
+    ]);
   });
 });

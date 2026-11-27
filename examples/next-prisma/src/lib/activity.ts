@@ -17,18 +17,27 @@ export const DEFAULT_ACTIVITY_LIMIT = 20;
 /** Hard upper bound on page size enforced by the Activity Feed BFF. */
 export const MAX_ACTIVITY_LIMIT = 100;
 
-/** Default rolling lookback window when neither `since` nor `until` is provided. */
+/** Default rolling lookback window when `since` is omitted. */
 export const DEFAULT_ACTIVITY_WINDOW_DAYS = 30;
 
+/** Hard upper bound on any Activity Feed date window for partition pruning. */
+export const MAX_ACTIVITY_WINDOW_DAYS = 90;
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MICROS_PER_MS = 1000n;
+const MAX_WINDOW_MICROS = BigInt(MAX_ACTIVITY_WINDOW_DAYS) * BigInt(MS_PER_DAY) * MICROS_PER_MS;
+const MIN_UTC_MS = Date.parse("0001-01-01T00:00:00.000Z");
+const MIN_UTC_MICROS = BigInt(MIN_UTC_MS) * MICROS_PER_MS;
+const ISO_BOUND_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ]([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(?:\.(\d{1,6}))?(Z|[+-](?:0\d|1[0-5]):[0-5]\d))?$/;
 
 /**
  * Explicit per-table allowlist of columns that may be summarized for browser clients.
  * Any column outside this allowlist is never projected into `changedFields` or `summary`.
  */
-const ALLOWED_TABLE_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
-  invoice: new Set(["status", "total"]),
-};
+const ALLOWED_TABLE_FIELDS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["invoice", new Set(["status", "total"])],
+]);
 
 /**
  * Demo server-side user directory resolving opaque actor IDs (`spec/actor.md` IDs-only rule)
@@ -37,14 +46,14 @@ const ALLOWED_TABLE_FIELDS: Readonly<Record<string, ReadonlySet<string>>> = {
  * In production, replace {@link resolveActorNames} with a single batched lookup against your
  * application user store (for example `prisma.user.findMany({ where: { id: { in: ids } } })`).
  */
-const DEMO_ACTOR_DIRECTORY: Readonly<Record<string, string>> = {
-  alice: "Alice Rivera",
-  bob: "Bob Chen",
-  carol: "Carol Diaz",
-  "dave-action": "Dave Patel",
-  usr_42: "Taylor Morgan",
-  bot_billing: "Billing Assistant",
-};
+const DEMO_ACTOR_DIRECTORY: ReadonlyMap<string, string> = new Map([
+  ["alice", "Alice Rivera"],
+  ["bob", "Bob Chen"],
+  ["carol", "Carol Diaz"],
+  ["dave-action", "Dave Patel"],
+  ["usr_42", "Taylor Morgan"],
+  ["bot_billing", "Billing Assistant"],
+]);
 
 /** Client-safe representation of an actor with a server-resolved display name. */
 export interface ActivityActorDto {
@@ -126,7 +135,7 @@ export async function resolveActorNames(
   const uniqueIds = new Set(actorIds);
   const resolved = new Map<string, string>();
   for (const id of uniqueIds) {
-    const name = DEMO_ACTOR_DIRECTORY[id];
+    const name = DEMO_ACTOR_DIRECTORY.get(id);
     if (name !== undefined) {
       resolved.set(id, name);
     }
@@ -162,6 +171,10 @@ function projectActor(
   };
 }
 
+function readOwn(obj: JsonObject | null | undefined, key: string): JsonValue | undefined {
+  return obj && Object.hasOwn(obj, key) ? obj[key] : undefined;
+}
+
 function formatScalar(value: JsonValue | undefined): string | null {
   if (value === undefined || value === null) {
     return null;
@@ -176,7 +189,7 @@ function projectRecordId(recordId: JsonObject | null): string | null {
   if (recordId === null) {
     return null;
   }
-  const idVal = formatScalar(recordId.id);
+  const idVal = formatScalar(readOwn(recordId, "id"));
   if (idVal !== null) {
     return idVal;
   }
@@ -195,11 +208,25 @@ function projectChangedFields(entry: HistoryEntry): readonly string[] {
   if (entry.source !== "db" || !entry.table_name || !entry.changed) {
     return [];
   }
-  const allowed = ALLOWED_TABLE_FIELDS[entry.table_name];
+  const allowed = ALLOWED_TABLE_FIELDS.get(entry.table_name);
   if (!allowed) {
     return [];
   }
   return entry.changed.filter((field) => allowed.has(field)).sort();
+}
+
+function formatUpdateDiffs(entry: HistoryEntry, changedFields: readonly string[]): string {
+  const diffs: string[] = [];
+  for (const field of changedFields) {
+    const beforeVal = formatScalar(readOwn(entry.before, field));
+    const afterVal = formatScalar(readOwn(entry.after, field));
+    if (beforeVal !== null && afterVal !== null) {
+      diffs.push(`${field}: ${beforeVal} → ${afterVal}`);
+    } else if (afterVal !== null) {
+      diffs.push(`${field}: ${afterVal}`);
+    }
+  }
+  return diffs.join(", ");
 }
 
 function summarizeDbEvent(
@@ -209,36 +236,24 @@ function summarizeDbEvent(
   changedFields: readonly string[],
 ): string {
   const ref = recordId !== null ? `${entity} #${recordId}` : entity;
-  const allowed = entry.table_name ? ALLOWED_TABLE_FIELDS[entry.table_name] : undefined;
+  const allowed = entry.table_name ? ALLOWED_TABLE_FIELDS.get(entry.table_name) : undefined;
 
-  if (entry.op === "INSERT") {
-    const details = formatAllowedSnapshot(entry.after, allowed);
-    return details ? `Created ${ref} (${details})` : `Created ${ref}`;
-  }
-
-  if (entry.op === "UPDATE") {
-    const diffs: string[] = [];
-    for (const field of changedFields) {
-      const beforeVal = formatScalar(entry.before?.[field]);
-      const afterVal = formatScalar(entry.after?.[field]);
-      if (beforeVal !== null && afterVal !== null) {
-        diffs.push(`${field}: ${beforeVal} → ${afterVal}`);
-      } else if (afterVal !== null) {
-        diffs.push(`${field}: ${afterVal}`);
-      }
+  switch (entry.op) {
+    case "INSERT": {
+      const details = formatAllowedSnapshot(entry.after, allowed);
+      return details ? `Created ${ref} (${details})` : `Created ${ref}`;
     }
-    return diffs.length > 0 ? `Updated ${ref} (${diffs.join(", ")})` : `Updated ${ref}`;
+    case "UPDATE": {
+      const diffs = formatUpdateDiffs(entry, changedFields);
+      return diffs ? `Updated ${ref} (${diffs})` : `Updated ${ref}`;
+    }
+    case "DELETE":
+      return `Deleted ${ref}`;
+    case "TRUNCATE":
+      return `Truncated ${entity}`;
+    default:
+      return `${entry.op} on ${ref}`;
   }
-
-  if (entry.op === "DELETE") {
-    return `Deleted ${ref}`;
-  }
-
-  if (entry.op === "TRUNCATE") {
-    return `Truncated ${entity}`;
-  }
-
-  return `${entry.op} on ${ref}`;
 }
 
 function formatAllowedSnapshot(
@@ -250,7 +265,7 @@ function formatAllowedSnapshot(
   }
   const parts: string[] = [];
   for (const field of allowed) {
-    const val = formatScalar(snapshot[field]);
+    const val = formatScalar(readOwn(snapshot, field));
     if (val !== null) {
       parts.push(`${field}: ${val}`);
     }
@@ -261,7 +276,7 @@ function formatAllowedSnapshot(
 function summarizeAppEvent(entry: HistoryEntry, entity: string, recordId: string | null): string {
   const ref = recordId !== null ? `${entity} #${recordId}` : entity;
   if (entry.op === "invoice.exported") {
-    const format = formatScalar(entry.after?.format);
+    const format = formatScalar(readOwn(entry.after, "format"));
     return format ? `Exported ${ref} as ${format}` : `Exported ${ref}`;
   }
   return recordId !== null ? `${entry.op} (${ref})` : entry.op;
@@ -296,10 +311,114 @@ export function toActivityFeedItem(
   };
 }
 
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  const check = new Date(0);
+  check.setUTCFullYear(year, month - 1, day);
+  return (
+    year > 0 &&
+    check.getUTCFullYear() === year &&
+    check.getUTCMonth() === month - 1 &&
+    check.getUTCDate() === day
+  );
+}
+
+function floorDivBigInt(numerator: bigint, denominator: bigint): bigint {
+  return numerator >= 0n ? numerator / denominator : (numerator - denominator + 1n) / denominator;
+}
+
+function parseBoundEpochMicros(raw: unknown, field: string): bigint {
+  const match = typeof raw === "string" ? ISO_BOUND_PATTERN.exec(raw) : null;
+  if (match === null) {
+    throw new AuditstreamError(
+      "INVALID_QUERY",
+      `${field} must be an RFC 3339 timestamp or YYYY-MM-DD UTC date`,
+    );
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!isValidCalendarDate(year, month, day)) {
+    throw new AuditstreamError("INVALID_QUERY", `${field} contains an invalid calendar date`);
+  }
+
+  const hourStr = match[4];
+  if (hourStr === undefined) {
+    const utcDate = `${match[1]}-${match[2]}-${match[3]}T00:00:00Z`;
+    return BigInt(Date.parse(utcDate)) * MICROS_PER_MS;
+  }
+
+  const minuteStr = match[5] ?? "00";
+  const secondStr = match[6] ?? "00";
+  const fracStr = match[7] ?? "";
+  const tzStr = match[8] ?? "Z";
+  const wholeSecMs = Date.parse(
+    `${match[1]}-${match[2]}-${match[3]}T${hourStr}:${minuteStr}:${secondStr}${tzStr}`,
+  );
+  if (Number.isNaN(wholeSecMs)) {
+    throw new AuditstreamError("INVALID_QUERY", `${field} is not a valid timestamp`);
+  }
+  return BigInt(wholeSecMs) * MICROS_PER_MS + BigInt(fracStr.padEnd(6, "0"));
+}
+
+function resolveActivityWindow(
+  since: string | undefined,
+  until: string | undefined,
+  nowMs: number,
+): { readonly since: Date | string; readonly until: string | undefined } {
+  if (since === undefined && until === undefined) {
+    return {
+      since: new Date(nowMs - DEFAULT_ACTIVITY_WINDOW_DAYS * MS_PER_DAY),
+      until: undefined,
+    };
+  }
+
+  if (since !== undefined && until !== undefined) {
+    const sinceMicros = parseBoundEpochMicros(since, "since");
+    const untilMicros = parseBoundEpochMicros(until, "until");
+    if (sinceMicros >= untilMicros) {
+      throw new AuditstreamError("INVALID_QUERY", "until must be strictly after since");
+    }
+    if (untilMicros - sinceMicros > MAX_WINDOW_MICROS) {
+      throw new AuditstreamError(
+        "INVALID_QUERY",
+        `date window cannot exceed ${MAX_ACTIVITY_WINDOW_DAYS} days`,
+      );
+    }
+    return { since, until };
+  }
+
+  if (since !== undefined) {
+    const sinceMicros = parseBoundEpochMicros(since, "since");
+    const nowMicros = BigInt(nowMs) * MICROS_PER_MS;
+    if (nowMicros - sinceMicros > MAX_WINDOW_MICROS) {
+      throw new AuditstreamError(
+        "INVALID_QUERY",
+        `since cannot be older than ${MAX_ACTIVITY_WINDOW_DAYS} days without an explicit until bound`,
+      );
+    }
+    return { since, until: undefined };
+  }
+
+  // Only `until` was provided: derive a bounded rolling lookback window before `until`
+  // so PostgreSQL still prunes historical monthly partitions.
+  const untilMicros = parseBoundEpochMicros(until, "until");
+  if (untilMicros <= MIN_UTC_MICROS) {
+    throw new AuditstreamError("INVALID_QUERY", "until must be after 0001-01-01T00:00:00Z");
+  }
+  const untilMs = Number(floorDivBigInt(untilMicros, MICROS_PER_MS));
+  const boundedSinceMs = Math.max(MIN_UTC_MS, untilMs - DEFAULT_ACTIVITY_WINDOW_DAYS * MS_PER_DAY);
+  return {
+    since: new Date(boundedSinceMs),
+    until,
+  };
+}
+
 /**
  * Queries the Activity Feed via `audit.query()` using keyset pagination (`nextCursor` / `hasMore`,
- * zero `count(*)` queries), enforces a default lookback window for partition pruning, resolves
- * opaque actor IDs in a single server-side batch, and projects rows to allowlisted client DTOs.
+ * zero `count(*)` queries), enforces a bounded date window (at most {@link MAX_ACTIVITY_WINDOW_DAYS}
+ * days, with a {@link DEFAULT_ACTIVITY_WINDOW_DAYS}-day lookback whenever `since` is omitted) for
+ * partition pruning, resolves opaque actor IDs in a single server-side batch, and projects rows to
+ * allowlisted client DTOs.
  */
 export async function queryActivityFeed(
   options: ActivityFeedQueryOptions = {},
@@ -312,20 +431,13 @@ export async function queryActivityFeed(
     );
   }
 
-  const defaultSince =
-    options.since === undefined && options.until === undefined
-      ? new Date(Date.now() - DEFAULT_ACTIVITY_WINDOW_DAYS * MS_PER_DAY)
-      : undefined;
+  const window = resolveActivityWindow(options.since, options.until, Date.now());
 
   const query: AuditQuery = {
     ...(options.source !== undefined ? { source: options.source } : {}),
     ...(options.opPrefix !== undefined ? { opPrefix: options.opPrefix } : {}),
-    ...(options.since !== undefined
-      ? { since: options.since }
-      : defaultSince !== undefined
-        ? { since: defaultSince }
-        : {}),
-    ...(options.until !== undefined ? { until: options.until } : {}),
+    since: window.since,
+    ...(window.until !== undefined ? { until: window.until } : {}),
     ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
     ...(options.tenant !== undefined ? { tenant: options.tenant } : {}),
     limit,
