@@ -333,7 +333,7 @@ function buildPredicates(query: AuditQuery, values: AuditQueryValues): string[] 
 
 /**
  * Queries `{schema}.changes` with validated filters and lossless microsecond keyset pagination,
- * ordered newest first (`occurred_at DESC, id DESC`).
+ * ordered newest first (`changes.occurred_at DESC, changes.id DESC`).
  *
  * - Supports both database trigger rows (`source: "db"`) and application events logged via
  *   `audit.log()` (`source: "app"`, `table_name IS NULL`).
@@ -372,7 +372,7 @@ export async function queryHistory(
   const sql =
     `SELECT ${HISTORY_SELECT_COLUMNS} ` +
     `FROM "${schema}"."changes"${whereClause} ` +
-    `ORDER BY occurred_at DESC, id DESC ` +
+    `ORDER BY changes.occurred_at DESC, changes.id DESC ` +
     `LIMIT ${limitParam}::int`;
 
   const result = await exec(sql, values);

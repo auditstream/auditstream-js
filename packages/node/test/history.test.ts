@@ -337,7 +337,9 @@ describe("audit.history()", () => {
     );
     expect(calls[0]?.text).toContain('FROM "custom_audit_2"."changes"');
     expect(calls[0]?.text).toContain("WHERE table_name = $1::text AND record_id = $2::jsonb");
-    expect(calls[0]?.text).toContain("ORDER BY occurred_at DESC, id DESC LIMIT $3::int");
+    expect(calls[0]?.text).toContain(
+      "ORDER BY changes.occurred_at DESC, changes.id DESC LIMIT $3::int",
+    );
     expect(calls[0]?.values).toEqual(["invoice", '{"id":7}', 50]);
 
     expect(entries).toHaveLength(1);

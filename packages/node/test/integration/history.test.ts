@@ -87,4 +87,60 @@ describe("audit.history() live Postgres integration", () => {
     expect(h30.map((e) => e.op)).toEqual(["INSERT"]);
     expect(h30[0]?.actor).toMatchObject({ type: "user", id: "u_create" });
   });
+
+  it("orders same-microsecond ties numerically across power-of-10 id boundaries and custom schemas without text-alias sorts", async () => {
+    const adminClient = new pg.Client({ connectionString: db.adminUrl });
+    await adminClient.connect();
+    try {
+      await adminClient.query(
+        `INSERT INTO auditstream.changes
+           (id, occurred_at, source, schema_name, table_name, op, record_id)
+         OVERRIDING SYSTEM VALUE VALUES
+           (99,  date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'INSERT', '{"id":999}'::jsonb),
+           (100, date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'UPDATE', '{"id":999}'::jsonb),
+           (101, date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'UPDATE', '{"id":999}'::jsonb)`,
+      );
+
+      // Also seed a non-default schema outside search_path to prove `changes.*` resolves cleanly.
+      await adminClient.query(`
+        CREATE SCHEMA custom_audit;
+        CREATE TABLE custom_audit.changes (LIKE auditstream.changes INCLUDING DEFAULTS INCLUDING IDENTITY INCLUDING CONSTRAINTS);
+        INSERT INTO custom_audit.changes
+          (id, occurred_at, source, schema_name, table_name, op, record_id)
+        OVERRIDING SYSTEM VALUE VALUES
+          (9,  date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'INSERT', '{"id":999}'::jsonb),
+          (10, date_trunc('second', now()) + interval '123456 microseconds', 'db', 'public', 'tie_invoice', 'UPDATE', '{"id":999}'::jsonb);
+        GRANT USAGE ON SCHEMA custom_audit TO app_user;
+        GRANT SELECT ON custom_audit.changes TO app_user;
+      `);
+    } finally {
+      await adminClient.end();
+    }
+
+    let capturedSql = "";
+    let capturedValues: [string, string, number] = ["", "", 0];
+    const exec = (text: string, values: [string, string, number]) => {
+      capturedSql = text;
+      capturedValues = values;
+      return appPool.query(text, values);
+    };
+
+    const entries = await audit.history(exec, { table: "tie_invoice", recordId: { id: 999 } });
+    expect(entries.map((e) => e.id)).toEqual(["101", "100", "99"]);
+    expect(entries[0]?.occurred_at).toMatch(/\.123456Z$/);
+
+    const planResult = await appPool.query<{ "QUERY PLAN": string }>(
+      `EXPLAIN (FORMAT TEXT) ${capturedSql}`,
+      capturedValues,
+    );
+    const planText = planResult.rows.map((r) => r["QUERY PLAN"]).join("\n");
+    expect(planText).not.toMatch(/Sort Key:.*(to_char\(|::text)/i);
+
+    const customEntries = await audit.history(exec, {
+      schema: "custom_audit",
+      table: "tie_invoice",
+      recordId: { id: 999 },
+    });
+    expect(customEntries.map((e) => e.id)).toEqual(["10", "9"]);
+  });
 });

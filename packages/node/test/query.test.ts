@@ -86,7 +86,7 @@ describe("audit.query()", () => {
     expect(sql).not.toContain("LIKE");
     expect(sql).toContain("occurred_at >= $10::timestamptz");
     expect(sql).toContain("occurred_at < $11::timestamptz");
-    expect(sql).toContain("ORDER BY occurred_at DESC, id DESC LIMIT $12::int");
+    expect(sql).toContain("ORDER BY changes.occurred_at DESC, changes.id DESC LIMIT $12::int");
 
     expect(calls[0]?.values).toEqual([
       "public",
