@@ -6,6 +6,7 @@
 
 import { Request as Request_2 } from 'express';
 import { RequestHandler } from 'express';
+import { Response as Response_2 } from 'express';
 
 // @public
 export interface Actor {
@@ -27,12 +28,12 @@ export interface AuditContext {
 }
 
 // @public
-export function auditstream<TRequest extends Request_2 = Request_2>(options: ExpressAuditOptions<TRequest>): RequestHandler;
+export function auditstream<TRequest extends Request_2 = Request_2, TLocals extends Record<string, any> = Record<string, unknown>>(options: ExpressAuditOptions<TRequest, TLocals>): RequestHandler;
 
 // @public
-export interface ExpressAuditOptions<TRequest extends Request_2 = Request_2> {
-    readonly actor: (req: TRequest) => Actor | undefined | PromiseLike<Actor | undefined>;
-    readonly context?: (req: TRequest) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
+export interface ExpressAuditOptions<TRequest extends Request_2 = Request_2, TLocals extends Record<string, any> = Record<string, unknown>> {
+    readonly actor: (req: TRequest, res: Response_2<unknown, TLocals>) => Actor | undefined | PromiseLike<Actor | undefined>;
+    readonly context?: (req: TRequest, res: Response_2<unknown, TLocals>) => AuditContext | undefined | PromiseLike<AuditContext | undefined>;
 }
 
 // @public

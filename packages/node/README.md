@@ -149,7 +149,7 @@ app.use(
 );
 ```
 
-Always validate and bound client-supplied headers such as `x-request-id` (and opt-in `userAgent`) before placing them in `context`, so oversized or malformed headers cannot exceed the 512-byte serialized actor+context payload limit (`PAYLOAD_TOO_LARGE`).
+Always validate and bound client-supplied headers such as `x-request-id` (and opt-in `userAgent`) before placing them in `context`, so oversized or malformed headers cannot exceed the 512-byte serialized actor+context payload limit (`PAYLOAD_TOO_LARGE`). If your auth middleware stores identity on `res.locals` instead of `req.user`, pass a second type parameter (`auditstream<Request, AuthLocals>({ actor: (_req, res) => ... })`).
 
 #### Hono (`@auditstream/node/hono`)
 

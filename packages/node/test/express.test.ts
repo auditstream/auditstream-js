@@ -1,5 +1,10 @@
 import type { AddressInfo } from "node:net";
-import express, { type ErrorRequestHandler, type Express, type Request } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+  type Request,
+  type Response,
+} from "express";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { auditstream } from "../src/express.js";
 import { type Actor, AuditstreamError, audit } from "../src/index.js";
@@ -338,6 +343,205 @@ describe("@auditstream/node/express", () => {
       expect(await orgRes.json()).toEqual({
         scope: { actor: { type: "user", id: "usr_exp_3", tenant: "org_77" } },
       });
+    } finally {
+      await started.close();
+    }
+  });
+
+  it("supports typed Express res.locals generics and does not call next() when a resolver already sent a response", async () => {
+    interface AuthLocals {
+      user?: { id: string; tenantId?: string };
+      requestTag?: string;
+    }
+
+    const blockedHandlerSpy = vi.fn();
+    const app = express();
+
+    app.use("/locals", (req, res, next) => {
+      const userId = req.header("x-user-id");
+      const tenantId = req.header("x-tenant-id");
+      if (userId) {
+        res.locals.user = tenantId ? { id: userId, tenantId } : { id: userId };
+      }
+      const tag = req.header("x-trace-tag");
+      if (tag) {
+        res.locals.requestTag = tag;
+      }
+      next();
+    });
+
+    // 1. Explicit <Request, AuthLocals>
+    app.use(
+      "/locals/explicit",
+      auditstream<Request, AuthLocals>({
+        actor: (_req, res) => {
+          expectTypeOf(res.locals.user).toEqualTypeOf<
+            { id: string; tenantId?: string } | undefined
+          >();
+          const user = res.locals.user;
+          if (!user) {
+            return undefined;
+          }
+          return user.tenantId
+            ? { type: "user", id: user.id, tenant: user.tenantId }
+            : { type: "user", id: user.id };
+        },
+        context: (_req, res) => {
+          expectTypeOf(res.locals.requestTag).toEqualTypeOf<string | undefined>();
+          return res.locals.requestTag
+            ? { requestId: res.locals.requestTag, source: "locals-explicit" }
+            : undefined;
+        },
+      }),
+    );
+
+    // 2. Parameter-annotated `res: Response<unknown, AuthLocals>` propagates into `context`
+    app.use(
+      "/locals/annotated",
+      auditstream({
+        actor: (_req, res: Response<unknown, AuthLocals>) =>
+          res.locals.user ? { type: "user", id: res.locals.user.id } : undefined,
+        context: (_req, res) => {
+          expectTypeOf(res.locals.requestTag).toEqualTypeOf<string | undefined>();
+          return res.locals.requestTag
+            ? { requestId: res.locals.requestTag, source: "locals-annotated" }
+            : undefined;
+        },
+      }),
+    );
+
+    // 3. Default unparameterized `res.locals` values are `unknown`, never `any`
+    app.use(
+      "/locals/default",
+      auditstream({
+        actor: (_req, res) => {
+          expectTypeOf(res.locals.user).toEqualTypeOf<unknown>();
+          const user = res.locals.user;
+          if (
+            typeof user === "object" &&
+            user !== null &&
+            "id" in user &&
+            typeof user.id === "string"
+          ) {
+            return { type: "user", id: user.id };
+          }
+          return undefined;
+        },
+      }),
+    );
+
+    // 4. Short-circuit response inside sync/async actor or context must NOT invoke downstream handler
+    app.use(
+      "/locals/short-circuit-sync",
+      auditstream<Request, AuthLocals>({
+        actor: (req, res) => {
+          if (req.header("x-short") === "sync-actor") {
+            res.status(401).json({ error: "sync-denied" });
+            return undefined;
+          }
+          return { type: "user", id: "usr_ctx_short" };
+        },
+        context: (req, res) => {
+          if (req.header("x-short") === "sync-context") {
+            res.status(403).json({ error: "sync-context-denied" });
+            return undefined;
+          }
+          if (req.header("x-short") === "async-context") {
+            return Promise.resolve().then(() => {
+              res.status(403).json({ error: "async-context-denied" });
+              return undefined;
+            });
+          }
+          return { source: "locals" };
+        },
+      }),
+    );
+
+    app.use(
+      "/locals/short-circuit-async",
+      auditstream<Request, AuthLocals>({
+        actor: async (req, res) => {
+          await Promise.resolve();
+          if (req.header("x-short") === "async-actor") {
+            res.status(401).json({ error: "async-denied" });
+            return undefined;
+          }
+          return { type: "user", id: "usr_async_ctx_short" };
+        },
+        context: async (req, res) => {
+          await Promise.resolve();
+          if (req.header("x-short") === "async-actor-context") {
+            res.status(403).json({ error: "async-actor-context-denied" });
+            return undefined;
+          }
+          return { source: "locals" };
+        },
+      }),
+    );
+
+    app.get("/locals/explicit", (_req, res) => {
+      res.json({ scope: audit.current() ?? null });
+    });
+    app.get("/locals/annotated", (_req, res) => {
+      res.json({ scope: audit.current() ?? null });
+    });
+    app.get("/locals/default", (_req, res) => {
+      res.json({ scope: audit.current() ?? null });
+    });
+    app.get("/locals/short-circuit-sync", (_req, res) => {
+      blockedHandlerSpy();
+      res.json({ ok: true });
+    });
+    app.get("/locals/short-circuit-async", (_req, res) => {
+      blockedHandlerSpy();
+      res.json({ ok: true });
+    });
+
+    const started = await startServer(app);
+    try {
+      const explicitRes = await fetch(`${started.url}/locals/explicit`, {
+        headers: { "x-user-id": "usr_loc_1", "x-tenant-id": "org_loc", "x-trace-tag": "req_loc_1" },
+      });
+      expect(explicitRes.status).toBe(200);
+      expect(await explicitRes.json()).toEqual({
+        scope: {
+          actor: { type: "user", id: "usr_loc_1", tenant: "org_loc" },
+          context: { requestId: "req_loc_1", source: "locals-explicit" },
+        },
+      });
+
+      const annotatedRes = await fetch(`${started.url}/locals/annotated`, {
+        headers: { "x-user-id": "usr_loc_2", "x-trace-tag": "req_loc_2" },
+      });
+      expect(annotatedRes.status).toBe(200);
+      expect(await annotatedRes.json()).toEqual({
+        scope: {
+          actor: { type: "user", id: "usr_loc_2" },
+          context: { requestId: "req_loc_2", source: "locals-annotated" },
+        },
+      });
+
+      const defaultRes = await fetch(`${started.url}/locals/default`, {
+        headers: { "x-user-id": "usr_loc_3" },
+      });
+      expect(defaultRes.status).toBe(200);
+      expect(await defaultRes.json()).toEqual({
+        scope: { actor: { type: "user", id: "usr_loc_3" } },
+      });
+
+      for (const [path, mode, expectedStatus] of [
+        ["/locals/short-circuit-sync", "sync-actor", 401],
+        ["/locals/short-circuit-sync", "sync-context", 403],
+        ["/locals/short-circuit-sync", "async-context", 403],
+        ["/locals/short-circuit-async", "async-actor", 401],
+        ["/locals/short-circuit-async", "async-actor-context", 403],
+      ] as const) {
+        const res = await fetch(`${started.url}${path}`, {
+          headers: { "x-short": mode },
+        });
+        expect(res.status).toBe(expectedStatus);
+      }
+      expect(blockedHandlerSpy).not.toHaveBeenCalled();
     } finally {
       await started.close();
     }
